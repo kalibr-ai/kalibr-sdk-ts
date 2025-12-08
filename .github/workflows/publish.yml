@@ -18,6 +18,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Debug - List files
+        run: |
+          echo "=== Current directory ==="
+          pwd
+          echo "=== Directory contents ==="
+          ls -la
+          echo "=== Source directory ==="
+          ls -la src/ || echo "src/ directory not found"
+          echo "=== Test files ==="
+          find . -name "*.test.ts" || echo "No test files found"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -57,6 +68,6 @@ jobs:
         run: npm run build
 
       - name: Publish to npm
-        run: npm publish --provenance --access public
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
