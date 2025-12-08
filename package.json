@@ -24,7 +24,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
-    "test": "tsx --test src/**/*.test.ts",
+    "test": "tsx --test './src/**/*.test.ts'",
     "lint": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
