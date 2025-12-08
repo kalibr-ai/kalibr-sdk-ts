@@ -1,6 +1,6 @@
 {
   "name": "@kalibr/sdk",
-  "version": "1.0.0",
+  "version": "0.0.1-alpha",
   "description": "Zero-dependency TypeScript SDK for Kalibr LLM observability",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -19,16 +19,13 @@
   },
   "files": [
     "dist",
-    "src",
     "README.md"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
-    "build:test": "tsc src/kalibr.test.ts --outDir dist-test --module nodenext --moduleResolution nodenext --target es2022 --lib es2022 --skipLibCheck",
-    "build:types": "tsc --emitDeclarationOnly",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "tsx --test src/**/*.test.ts",
     "lint": "tsc --noEmit",
-    "test": "npm run build && npm run build:test && node --test dist-test/kalibr.test.js",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -58,8 +55,7 @@
   "devDependencies": {
     "@types/node": "^24.10.1",
     "tsup": "^8.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.3.0"
-  },
-  "peerDependencies": {},
-  "dependencies": {}
+  }
 }

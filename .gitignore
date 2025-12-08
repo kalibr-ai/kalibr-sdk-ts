@@ -7,7 +7,6 @@ pnpm-debug.log*
 
 # Build output
 dist/
-dist-test/
 *.tsbuildinfo
 
 # Testing
@@ -29,3 +28,5 @@ coverage/
 # Misc
 *.log
 .cache/
+
+.claude
