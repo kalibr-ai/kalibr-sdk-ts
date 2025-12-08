@@ -413,4 +413,4 @@ KALIBR_TENANT_ID=your-tenant-id
 
 ## License
 
-MIT
+Apache-2.0
