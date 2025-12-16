@@ -2,6 +2,9 @@
 
 Zero-dependency TypeScript SDK for Kalibr LLM observability. Track costs, latency, and token usage across OpenAI, Anthropic, Google, and Cohere models.
 
+[![npm version](https://img.shields.io/npm/v/@kalibr/sdk)](https://www.npmjs.com/package/@kalibr/sdk)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
 ## Features
 
 - **Zero dependencies** - Uses native `fetch`, works in Node.js 18+, Edge runtimes, and browsers
@@ -411,6 +414,36 @@ KALIBR_TENANT_ID=your-tenant-id
 - Node.js 18+ (for native fetch)
 - TypeScript 5.0+ (optional, for type checking)
 
+## Development
+
+```bash
+git clone https://github.com/kalibr-ai/kalibr-sdk-ts.git
+cd kalibr-sdk-ts
+
+# Install dependencies
+npm install
+
+# Run tests
+npm test
+
+# Build
+npm run build
+
+# Lint
+npm run lint
+```
+
+## Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
-Apache-2.0
+Apache 2.0 — see [LICENSE](LICENSE).
+
+## Links
+
+- [Kalibr Dashboard](https://dashboard.kalibr.systems)
+- [GitHub](https://github.com/kalibr-ai/kalibr-sdk-ts)
+- [npm](https://www.npmjs.com/package/@kalibr/sdk)
+- [Python SDK](https://github.com/kalibr-ai/kalibr-sdk-python)
