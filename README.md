@@ -443,6 +443,7 @@ Apache 2.0 — see [LICENSE](LICENSE).
 
 ## Links
 
+- [Documentation](https://kalibr.systems/docs)
 - [Kalibr Dashboard](https://dashboard.kalibr.systems)
 - [GitHub](https://github.com/kalibr-ai/kalibr-sdk-ts)
 - [npm](https://www.npmjs.com/package/@kalibr/sdk)
