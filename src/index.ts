@@ -54,3 +54,31 @@ export {
   createSpan,
   withSpan,
 } from './kalibr';
+
+// Intelligence & Routing exports
+export {
+  // Client
+  KalibrIntelligence,
+  type KalibrIntelligenceConfig,
+  // Request option types
+  type GetPolicyOptions,
+  type ReportOutcomeOptions,
+  type RegisterPathOptions,
+  type ListPathsOptions,
+  type DecideOptions,
+  type ExplorationConfigOptions,
+  // Response types
+  type PolicyResponse,
+  type OutcomeResponse,
+  type PathResponse,
+  type PathInfo,
+  type ListPathsResponse,
+  type DisablePathResponse,
+  type DecideResponse,
+  type ExplorationConfigResponse,
+  // Convenience functions
+  getPolicy,
+  reportOutcome,
+  registerPath,
+  decide,
+} from './intelligence';
