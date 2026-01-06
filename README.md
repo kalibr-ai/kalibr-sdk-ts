@@ -11,6 +11,7 @@ Zero-dependency TypeScript SDK for Kalibr LLM observability. Track costs, latenc
 - **Schema compatible** - Matches Kalibr Python SDK schema exactly
 - **Fluent API** - SpanBuilder with auto-timing and method chaining
 - **Cost calculation** - Built-in pricing tables for all major LLM providers
+- **Intelligence API** - Outcome-conditioned routing for optimal model selection
 - **NDJSON batching** - Efficient batch sending of multiple spans
 - **TypeScript-first** - Full type definitions with strict mode
 
@@ -127,6 +128,71 @@ async function processDocument(document: string) {
 
   return { summary: summary.text, entities: entities.text };
 }
+```
+
+## Intelligence API
+
+Query Kalibr for optimal model recommendations based on historical outcomes.
+
+### Initialize Intelligence Client
+
+```typescript
+import { KalibrIntelligence } from '@kalibr/sdk';
+
+// Singleton pattern (recommended)
+KalibrIntelligence.init({
+  apiKey: process.env.KALIBR_API_KEY!,
+  tenantId: process.env.KALIBR_TENANT_ID!,
+});
+```
+
+### Get Policy (Model Recommendation)
+
+```typescript
+import { getPolicy } from '@kalibr/sdk';
+
+// Basic usage
+const policy = await getPolicy('book_meeting');
+console.log(policy.recommended_model);  // e.g., "gpt-4o"
+
+// With tool and parameter recommendations
+const policy = await getPolicy('book_meeting', {
+  includeTools: true,
+  includeParams: ['temperature'],
+  constraints: {
+    max_cost_usd: 0.05,
+    max_latency_ms: 3000,
+  },
+});
+```
+
+### Report Outcome
+
+```typescript
+import { reportOutcome } from '@kalibr/sdk';
+
+await reportOutcome(traceId, 'book_meeting', true, {
+  score: 0.95,
+  metadata: { attendees: 5 },
+});
+```
+
+### Intelligent Routing with decide()
+
+```typescript
+import { registerPath, decide } from '@kalibr/sdk';
+
+// Register available paths
+await registerPath('book_meeting', 'gpt-4o', {
+  toolId: 'calendar_api',
+  riskLevel: 'low',
+});
+
+// Get routing decision
+const decision = await decide('book_meeting');
+console.log(decision.model_id);     // Selected model
+console.log(decision.confidence);   // Confidence score
+console.log(decision.exploration);  // True if exploring
 ```
 
 ## API Reference
