@@ -95,12 +95,14 @@ export interface ExplorationConfigOptions {
   goal?: string;
   /** Exploration rate (0-1) */
   explorationRate?: number;
-  /** Minimum samples before exploiting */
-  minSamples?: number;
-  /** Enable/disable exploration */
-  enabled?: boolean;
-  /** Exploration strategy type */
-  strategy?: 'epsilon_greedy' | 'ucb' | 'thompson_sampling';
+  /** Minimum samples before exploiting best path */
+  minSamplesBeforeExploit?: number;
+  /** Threshold for automatic rollback on performance drop */
+  rollbackThreshold?: number;
+  /** Days before path stats are considered stale */
+  stalenessDays?: number;
+  /** Whether to explore on high-risk tasks */
+  explorationOnHighRisk?: boolean;
 }
 
 // ============================================================================
@@ -215,12 +217,44 @@ export interface ExplorationConfigResponse {
   goal?: string | null;
   /** Current exploration rate */
   exploration_rate: number;
-  /** Minimum samples before exploiting */
-  min_samples: number;
-  /** Whether exploration is enabled */
-  enabled: boolean;
-  /** Exploration strategy */
-  strategy: 'epsilon_greedy' | 'ucb' | 'thompson_sampling';
+  /** Minimum samples before exploiting best path */
+  min_samples_before_exploit: number;
+  /** Threshold for automatic rollback on performance drop */
+  rollback_threshold: number;
+  /** Days before path stats are considered stale */
+  staleness_days: number;
+  /** Whether to explore on high-risk tasks */
+  exploration_on_high_risk: boolean;
+}
+
+/** Options for getRecommendation request */
+export interface GetRecommendationOptions {
+  /** Goal for the recommendation */
+  goal?: string;
+  /** What to optimize for (e.g., 'cost', 'latency', 'quality') */
+  optimizeFor?: string;
+  /** Constraints to apply */
+  constraints?: Record<string, unknown>;
+  /** Time window in hours for historical data */
+  windowHours?: number;
+}
+
+/** Response from getRecommendation */
+export interface RecommendationResponse {
+  /** Recommended model ID */
+  model_id: string;
+  /** Recommended tool ID */
+  tool_id?: string;
+  /** Recommended parameters */
+  params?: Record<string, unknown>;
+  /** Confidence score (0-1) */
+  confidence: number;
+  /** Reason for this recommendation */
+  reason: string;
+  /** Historical success rate */
+  success_rate?: number;
+  /** Number of samples this recommendation is based on */
+  sample_count?: number;
 }
 
 // ============================================================================
@@ -370,7 +404,6 @@ export class KalibrIntelligence {
   ): Promise<PolicyResponse> {
     const body: Record<string, unknown> = {
       goal,
-      tenant_id: this.tenantId,
     };
 
     if (options.taskType !== undefined) body['task_type'] = options.taskType;
@@ -379,7 +412,7 @@ export class KalibrIntelligence {
     if (options.includeTools !== undefined) body['include_tools'] = options.includeTools;
     if (options.includeParams !== undefined) body['include_params'] = options.includeParams;
 
-    return this.request<PolicyResponse>('POST', '/api/v1/policy', body);
+    return this.request<PolicyResponse>('POST', '/api/v1/intelligence/policy', body);
   }
 
   /**
@@ -409,7 +442,6 @@ export class KalibrIntelligence {
       trace_id: traceId,
       goal,
       success,
-      tenant_id: this.tenantId,
     };
 
     if (options.score !== undefined) body['score'] = options.score;
@@ -418,7 +450,7 @@ export class KalibrIntelligence {
     if (options.toolId !== undefined) body['tool_id'] = options.toolId;
     if (options.executionParams !== undefined) body['execution_params'] = options.executionParams;
 
-    return this.request<OutcomeResponse>('POST', '/api/v1/outcome', body);
+    return this.request<OutcomeResponse>('POST', '/api/v1/intelligence/report-outcome', body);
   }
 
   /**
@@ -447,14 +479,13 @@ export class KalibrIntelligence {
     const body: Record<string, unknown> = {
       goal,
       model_id: modelId,
-      tenant_id: this.tenantId,
     };
 
     if (options.toolId !== undefined) body['tool_id'] = options.toolId;
     if (options.params !== undefined) body['params'] = options.params;
     if (options.riskLevel !== undefined) body['risk_level'] = options.riskLevel;
 
-    return this.request<PathResponse>('POST', '/api/v1/paths', body);
+    return this.request<PathResponse>('POST', '/api/v1/routing/paths', body);
   }
 
   /**
@@ -474,16 +505,16 @@ export class KalibrIntelligence {
    */
   async listPaths(options: ListPathsOptions = {}): Promise<ListPathsResponse> {
     const params = new URLSearchParams();
-    params.set('tenant_id', this.tenantId);
 
     if (options.goal !== undefined) params.set('goal', options.goal);
     if (options.includeDisabled !== undefined) {
       params.set('include_disabled', String(options.includeDisabled));
     }
 
+    const queryString = params.toString();
     return this.request<ListPathsResponse>(
       'GET',
-      `/api/v1/paths?${params.toString()}`
+      `/api/v1/routing/paths${queryString ? `?${queryString}` : ''}`
     );
   }
 
@@ -501,7 +532,7 @@ export class KalibrIntelligence {
   async disablePath(pathId: string): Promise<DisablePathResponse> {
     return this.request<DisablePathResponse>(
       'DELETE',
-      `/api/v1/paths/${encodeURIComponent(pathId)}?tenant_id=${encodeURIComponent(this.tenantId)}`
+      `/api/v1/routing/paths/${encodeURIComponent(pathId)}`
     );
   }
 
@@ -532,14 +563,13 @@ export class KalibrIntelligence {
   ): Promise<DecideResponse> {
     const body: Record<string, unknown> = {
       goal,
-      tenant_id: this.tenantId,
     };
 
     if (options.taskRiskLevel !== undefined) {
       body['task_risk_level'] = options.taskRiskLevel;
     }
 
-    return this.request<DecideResponse>('POST', '/api/v1/decide', body);
+    return this.request<DecideResponse>('POST', '/api/v1/routing/decide', body);
   }
 
   /**
@@ -553,27 +583,26 @@ export class KalibrIntelligence {
    * await intelligence.setExplorationConfig({
    *   goal: 'summarize document',
    *   explorationRate: 0.1,
-   *   minSamples: 10,
-   *   strategy: 'epsilon_greedy',
+   *   minSamplesBeforeExploit: 10,
+   *   rollbackThreshold: 0.2,
    * });
    * ```
    */
   async setExplorationConfig(
     options: ExplorationConfigOptions
   ): Promise<ExplorationConfigResponse> {
-    const body: Record<string, unknown> = {
-      tenant_id: this.tenantId,
-    };
+    const body: Record<string, unknown> = {};
 
     if (options.goal !== undefined) body['goal'] = options.goal;
     if (options.explorationRate !== undefined) body['exploration_rate'] = options.explorationRate;
-    if (options.minSamples !== undefined) body['min_samples'] = options.minSamples;
-    if (options.enabled !== undefined) body['enabled'] = options.enabled;
-    if (options.strategy !== undefined) body['strategy'] = options.strategy;
+    if (options.minSamplesBeforeExploit !== undefined) body['min_samples_before_exploit'] = options.minSamplesBeforeExploit;
+    if (options.rollbackThreshold !== undefined) body['rollback_threshold'] = options.rollbackThreshold;
+    if (options.stalenessDays !== undefined) body['staleness_days'] = options.stalenessDays;
+    if (options.explorationOnHighRisk !== undefined) body['exploration_on_high_risk'] = options.explorationOnHighRisk;
 
     return this.request<ExplorationConfigResponse>(
-      'PUT',
-      '/api/v1/exploration/config',
+      'POST',
+      '/api/v1/routing/config',
       body
     );
   }
@@ -597,16 +626,54 @@ export class KalibrIntelligence {
     goal?: string
   ): Promise<ExplorationConfigResponse> {
     const params = new URLSearchParams();
-    params.set('tenant_id', this.tenantId);
 
     if (goal !== undefined) {
       params.set('goal', goal);
     }
 
+    const queryString = params.toString();
     return this.request<ExplorationConfigResponse>(
       'GET',
-      `/api/v1/exploration/config?${params.toString()}`
+      `/api/v1/routing/config${queryString ? `?${queryString}` : ''}`
     );
+  }
+
+  /**
+   * Get a model recommendation for a task type.
+   *
+   * Uses historical performance data and configured policies
+   * to recommend the best model for a given task.
+   *
+   * @param taskType - The type of task to get a recommendation for
+   * @param options - Additional options
+   * @returns Model recommendation
+   *
+   * @example
+   * ```typescript
+   * const recommendation = await intelligence.getRecommendation('summarization', {
+   *   goal: 'summarize document',
+   *   optimizeFor: 'quality',
+   *   windowHours: 24,
+   * });
+   *
+   * console.log(recommendation.model_id);   // Recommended model
+   * console.log(recommendation.confidence); // Confidence score
+   * ```
+   */
+  async getRecommendation(
+    taskType: string,
+    options: GetRecommendationOptions = {}
+  ): Promise<RecommendationResponse> {
+    const body: Record<string, unknown> = {
+      task_type: taskType,
+    };
+
+    if (options.goal !== undefined) body['goal'] = options.goal;
+    if (options.optimizeFor !== undefined) body['optimize_for'] = options.optimizeFor;
+    if (options.constraints !== undefined) body['constraints'] = options.constraints;
+    if (options.windowHours !== undefined) body['window_hours'] = options.windowHours;
+
+    return this.request<RecommendationResponse>('POST', '/api/v1/intelligence/recommend', body);
   }
 }
 
@@ -716,4 +783,31 @@ export async function decide(
   options?: DecideOptions
 ): Promise<DecideResponse> {
   return KalibrIntelligence.getInstance().decide(goal, options);
+}
+
+/**
+ * Get a model recommendation for a task type.
+ * Uses the singleton KalibrIntelligence instance.
+ *
+ * @param taskType - The type of task to get a recommendation for
+ * @param options - Additional options
+ * @returns Model recommendation
+ *
+ * @example
+ * ```typescript
+ * import { KalibrIntelligence, getRecommendation } from '@kalibr/sdk';
+ *
+ * KalibrIntelligence.init({ apiKey: 'key', tenantId: 'tenant' });
+ * const recommendation = await getRecommendation('summarization', {
+ *   goal: 'summarize document',
+ *   optimizeFor: 'quality',
+ * });
+ * console.log(recommendation.model_id, recommendation.confidence);
+ * ```
+ */
+export async function getRecommendation(
+  taskType: string,
+  options?: GetRecommendationOptions
+): Promise<RecommendationResponse> {
+  return KalibrIntelligence.getInstance().getRecommendation(taskType, options);
 }
