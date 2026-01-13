@@ -82,3 +82,24 @@ export {
   registerPath,
   decide,
 } from './intelligence';
+
+// Context management exports
+export {
+  // Trace context
+  getTraceId,
+  setTraceId,
+  withTraceId,
+  newTraceId,
+  // Span context
+  getParentSpanId,
+  setParentSpanId,
+  withSpanContext,
+  // Goal context
+  getGoal,
+  setGoal,
+  withGoal,
+  clearGoal,
+  // Combined helper
+  traceContext,
+  type TraceContextOptions,
+} from './context';

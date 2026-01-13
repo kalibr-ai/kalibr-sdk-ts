@@ -24,6 +24,8 @@
  * ```
  */
 
+import { getTraceId, newTraceId, getParentSpanId, setParentSpanId } from './context';
+
 // ============================================================================
 // Types matching trace_models.py TraceEvent exactly
 // ============================================================================
@@ -664,18 +666,28 @@ export class SpanBuilder {
   /**
    * Start timing the span.
    * Records the start timestamp and returns a StartedSpan.
+   *
+   * Uses context for trace_id and parent_span_id if not explicitly set:
+   * - trace_id: Uses context trace ID, or generates a new one
+   * - parent_span_id: Uses context parent span ID for nested operations
+   *
+   * After starting, this span's ID is set as the parent for nested operations.
    */
   start(): StartedSpan {
     this.startTime = Date.now();
     this.startTimestamp = timestamp();
 
-    // Generate IDs if not set
-    if (!this.span.trace_id) {
-      this.span.trace_id = generateId();
-    }
+    // Use context for trace_id and parent_span_id if not explicitly set
+    this.span.trace_id = this.span.trace_id || getTraceId() || newTraceId();
+    this.span.parent_span_id = this.span.parent_span_id || getParentSpanId();
+
+    // Generate span_id if not set
     if (!this.span.span_id) {
       this.span.span_id = generateId();
     }
+
+    // Set this span as parent for nested operations
+    setParentSpanId(this.span.span_id);
 
     // Get client (use provided or singleton)
     const client = this.client || (Kalibr.isInitialized() ? Kalibr.getInstance() : null);

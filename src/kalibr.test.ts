@@ -346,7 +346,10 @@ describe('SpanBuilder', () => {
     const traceId = span.getTraceId();
     const spanId = span.getSpanId();
 
-    assert.strictEqual(traceId.length, 32);
+    // trace_id uses newTraceId() format: timestamp-random (e.g., lxyz123-abc456def789)
+    assert.ok(traceId.includes('-'), 'trace_id should be in timestamp-random format');
+    assert.ok(traceId.length >= 15 && traceId.length <= 30, 'trace_id should be reasonable length');
+    // span_id uses generateId() format: 32-char hex
     assert.strictEqual(spanId.length, 32);
     assert.notStrictEqual(traceId, spanId);
   });
