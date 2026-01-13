@@ -82,3 +82,14 @@ export {
   registerPath,
   decide,
 } from './intelligence';
+
+// Router exports
+export {
+  Router,
+  type RouterConfig,
+  type PathConfig,
+  type PathSpec,
+  type CompletionOptions,
+  type Message,
+  type ChatCompletion,
+} from './router';
