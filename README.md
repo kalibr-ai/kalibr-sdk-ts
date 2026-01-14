@@ -1,19 +1,24 @@
 # @kalibr/sdk
 
-Zero-dependency TypeScript SDK for Kalibr LLM observability. Track costs, latency, and token usage across OpenAI, Anthropic, Google, and Cohere models.
+**AI Agent Execution Intelligence Platform**
+
+Zero-dependency TypeScript SDK for Kalibr. Build intelligent agents that learn from execution history to route, retry, and optimize automatically.
 
 [![npm version](https://img.shields.io/npm/v/@kalibr/sdk)](https://www.npmjs.com/package/@kalibr/sdk)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue)](https://www.typescriptlang.org/)
 
-## Features
+## What is Kalibr?
 
-- **Zero dependencies** - Uses native `fetch`, works in Node.js 18+, Edge runtimes, and browsers
-- **Schema compatible** - Matches Kalibr Python SDK schema exactly
-- **Fluent API** - SpanBuilder with auto-timing and method chaining
-- **Cost calculation** - Built-in pricing tables for all major LLM providers
-- **Intelligence API** - Outcome-conditioned routing for optimal model selection
-- **NDJSON batching** - Efficient batch sending of multiple spans
-- **TypeScript-first** - Full type definitions with strict mode
+Kalibr provides **execution intelligence** for AI agents — enabling them to learn from outcomes and automatically improve their decisions. Unlike traditional observability tools that just show you what broke, Kalibr helps your agents route around failures in real-time.
+
+### Key Capabilities
+
+- 🎯 **Intelligent Routing** - Agents query for model recommendations based on learned outcomes
+- 🔄 **Auto-Instrumentation** - Zero-config tracing for OpenAI, Anthropic, Google, Cohere
+- 📊 **Observability** - Track costs, latency, and token usage across all providers
+- 🧠 **Outcome Learning** - Report successes/failures to improve future routing decisions
+- 🚀 **Production-Ready** - Zero dependencies, works in Node.js 18+, Edge runtimes, browsers
 
 ## Installation
 
@@ -27,119 +32,396 @@ pnpm add @kalibr/sdk
 
 ## Quick Start
 
-### 1. Initialize the SDK
+### Option 1: High-Level Router (Recommended)
+
+The easiest way to get started — automatic routing with outcome learning:
 
 ```typescript
-import { Kalibr } from '@kalibr/sdk';
+import { Router } from '@kalibr/sdk';
+
+// Initialize router with goal and available models
+const router = new Router({
+  goal: 'summarize_article',
+  paths: ['gpt-4o', 'claude-3-sonnet', 'gemini-1.5-pro'],
+  successWhen: (output) => output.length > 100 && output.length < 500
+});
+
+// Router automatically picks the best model and reports outcomes
+const response = await router.completion([
+  { role: 'user', content: 'Summarize this article...' }
+]);
+
+console.log(response.choices[0].message.content);
+```
+
+**What just happened?**
+1. Router called the intelligence API to decide which model to use
+2. Made the LLM call with unified interface (works with any provider)
+3. Auto-evaluated success using your `successWhen` function
+4. Reported outcome to improve future routing decisions
+
+### Option 2: Auto-Instrumentation (Zero Config)
+
+Wrap your existing LLM clients for automatic tracing:
+
+```typescript
+import { createTracedOpenAI } from '@kalibr/sdk';
+
+// Use traced client instead of regular OpenAI
+const openai = createTracedOpenAI();
+
+// All calls now automatically traced!
+const response = await openai.chat.completions.create({
+  model: 'gpt-4o',
+  messages: [{ role: 'user', content: 'Hello!' }]
+});
+```
+
+**Available wrappers:**
+- `createTracedOpenAI()` - OpenAI
+- `createTracedAnthropic()` - Anthropic
+- `createTracedGoogle(apiKey)` - Google Gemini
+- `createTracedCohere()` - Cohere
+
+### Option 3: Manual Tracing (Full Control)
+
+Use SpanBuilder for fine-grained control:
+
+```typescript
+import { Kalibr, SpanBuilder } from '@kalibr/sdk';
 
 // Initialize once at app startup
 Kalibr.init({
   apiKey: process.env.KALIBR_API_KEY!,
   tenantId: process.env.KALIBR_TENANT_ID!,
-  environment: 'prod',    // optional: 'prod' | 'staging' | 'dev'
-  service: 'my-app',      // optional: service name
-  debug: true,            // optional: enable console logging
+  environment: 'prod',
+});
+
+// Track an LLM call
+const span = new SpanBuilder()
+  .setProvider('openai')
+  .setModel('gpt-4o')
+  .setOperation('chat_completion')
+  .start();
+
+try {
+  const response = await openai.chat.completions.create({...});
+
+  await span.finish({
+    inputTokens: response.usage?.prompt_tokens,
+    outputTokens: response.usage?.completion_tokens,
+  });
+} catch (error) {
+  await span.error(error as Error);
+  throw error;
+}
+```
+
+---
+
+## Core Features
+
+### 🎯 Intelligent Router
+
+Build agents that learn from outcomes and automatically improve routing decisions.
+
+#### Basic Router
+
+```typescript
+import { Router } from '@kalibr/sdk';
+
+const router = new Router({
+  goal: 'book_meeting',
+  paths: ['gpt-4o', 'claude-3-sonnet']
+});
+
+const response = await router.completion([
+  { role: 'user', content: 'Schedule a meeting with Alice tomorrow at 2pm' }
+]);
+
+// Manually report outcome
+router.report(true); // success
+```
+
+#### Router with Auto-Evaluation
+
+```typescript
+const router = new Router({
+  goal: 'extract_entities',
+  paths: ['gpt-4o-mini', 'claude-3-haiku'],
+  successWhen: (output) => {
+    // Auto-evaluate based on output
+    const entities = JSON.parse(output);
+    return entities.length > 0 && entities.every(e => e.type && e.value);
+  }
+});
+
+// Router automatically evaluates and reports outcome
+const response = await router.completion([...]);
+```
+
+#### Advanced Configuration
+
+```typescript
+const router = new Router({
+  goal: 'code_generation',
+  paths: [
+    { model: 'gpt-4o', tools: ['web_search'], params: { temperature: 0.7 } },
+    { model: 'claude-3-opus', tools: ['code_executor'] }
+  ],
+  explorationRate: 0.1, // 10% exploration for learning
+  autoRegister: true // Register paths on initialization
 });
 ```
 
-### 2. Track LLM Calls with SpanBuilder (Recommended)
+#### Cross-Provider API
+
+Router provides a unified OpenAI-compatible interface for all providers:
 
 ```typescript
-import { SpanBuilder } from '@kalibr/sdk';
+// Works with any provider - same interface!
+const response = await router.completion([
+  { role: 'system', content: 'You are a helpful assistant' },
+  { role: 'user', content: 'Hello!' }
+]);
+
+// Force a specific model
+const response = await router.completion(
+  messages,
+  { forceModel: 'claude-3-opus' }
+);
+```
+
+---
+
+### 🔄 Auto-Instrumentation
+
+Wrap your LLM clients for automatic tracing with zero configuration changes.
+
+#### OpenAI
+
+```typescript
+import { createTracedOpenAI } from '@kalibr/sdk';
+
+const openai = createTracedOpenAI(process.env.OPENAI_API_KEY);
+
+// All calls automatically traced
+const response = await openai.chat.completions.create({
+  model: 'gpt-4o',
+  messages: [{ role: 'user', content: 'Hello!' }]
+});
+```
+
+#### Anthropic
+
+```typescript
+import { createTracedAnthropic } from '@kalibr/sdk';
+
+const anthropic = createTracedAnthropic(process.env.ANTHROPIC_API_KEY);
+
+const response = await anthropic.messages.create({
+  model: 'claude-3-sonnet-20240229',
+  max_tokens: 1024,
+  messages: [{ role: 'user', content: 'Hello!' }]
+});
+```
+
+#### Google Gemini
+
+```typescript
+import { createTracedGoogle } from '@kalibr/sdk';
+
+const google = createTracedGoogle(process.env.GOOGLE_API_KEY);
+const model = google.getGenerativeModel({ model: 'gemini-pro' });
+
+const result = await model.generateContent('Hello!');
+```
+
+#### Cohere
+
+```typescript
+import { createTracedCohere } from '@kalibr/sdk';
+
+const cohere = createTracedCohere(process.env.COHERE_API_KEY);
+
+const response = await cohere.chat({
+  model: 'command-r-plus',
+  message: 'Hello!'
+});
+```
+
+#### Wrap Existing Clients
+
+Already have clients? Wrap them:
+
+```typescript
 import OpenAI from 'openai';
+import { wrapOpenAI } from '@kalibr/sdk';
 
-const openai = new OpenAI();
-
-async function chat(prompt: string) {
-  // Start timing
-  const span = new SpanBuilder()
-    .setProvider('openai')
-    .setModel('gpt-4o')
-    .setOperation('chat_completion')
-    .setEndpoint('chat.completions.create')
-    .start();
-
-  try {
-    // Make the LLM call
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    // Finish and send span (auto-calculates duration and cost)
-    await span.finish({
-      inputTokens: response.usage?.prompt_tokens ?? 0,
-      outputTokens: response.usage?.completion_tokens ?? 0,
-    });
-
-    return response.choices[0]?.message?.content;
-  } catch (error) {
-    // Record error and send span
-    await span.error(error as Error, {
-      inputTokens: 0,
-      outputTokens: 0,
-    });
-    throw error;
-  }
-}
+const openai = new OpenAI({ apiKey: '...' });
+wrapOpenAI(openai); // Now traced!
 ```
 
-### 3. Track Nested Spans (Multi-step Workflows)
+---
+
+### 🧠 Context Management
+
+Automatic trace and span propagation using AsyncLocalStorage.
+
+#### Basic Context
 
 ```typescript
-import { SpanBuilder, generateId } from '@kalibr/sdk';
+import { withTraceId, getTraceId } from '@kalibr/sdk';
 
-async function processDocument(document: string) {
-  // Create a shared trace ID for the workflow
-  const traceId = generateId();
+await withTraceId('order-123', async () => {
+  console.log(getTraceId()); // 'order-123'
 
-  // Step 1: Summarize
-  const summarySpan = new SpanBuilder()
-    .setTraceId(traceId)
-    .setProvider('openai')
-    .setModel('gpt-4o')
-    .setOperation('summarize')
-    .setWorkflowId('document-processor')
-    .start();
-
-  const summary = await callLLM('Summarize this: ' + document);
-
-  await summarySpan.finish({
-    inputTokens: summary.usage.prompt_tokens,
-    outputTokens: summary.usage.completion_tokens,
-  });
-
-  // Step 2: Extract entities (child span)
-  const extractSpan = new SpanBuilder()
-    .setTraceId(traceId)
-    .setParentSpanId(summarySpan.getSpanId())
-    .setProvider('anthropic')
-    .setModel('claude-3-sonnet-20240229')
-    .setOperation('extract_entities')
-    .setWorkflowId('document-processor')
-    .start();
-
-  const entities = await callClaude('Extract entities: ' + summary.text);
-
-  await extractSpan.finish({
-    inputTokens: entities.usage.input_tokens,
-    outputTokens: entities.usage.output_tokens,
-  });
-
-  return { summary: summary.text, entities: entities.text };
-}
+  // All spans created here will use this trace ID
+  const span = new SpanBuilder().start();
+  console.log(span.getTraceId()); // 'order-123'
+});
 ```
+
+#### Nested Spans (Automatic Parent-Child)
+
+```typescript
+import { withSpanContext } from '@kalibr/sdk';
+
+const parentSpan = new SpanBuilder()
+  .setOperation('parent')
+  .start();
+
+await withSpanContext(parentSpan.getSpanId(), async () => {
+  // Child span automatically gets parent_span_id set
+  const childSpan = new SpanBuilder()
+    .setOperation('child')
+    .start();
+
+  console.log(childSpan.span.parent_span_id); // parentSpan's ID
+});
+```
+
+#### Goal-Based Context
+
+```typescript
+import { withGoal, getGoal } from '@kalibr/sdk';
+
+await withGoal('book_meeting', async () => {
+  // All operations tagged with this goal
+  const router = new Router({ goal: getGoal()! });
+  await router.completion([...]);
+});
+```
+
+#### Combined Context
+
+```typescript
+import { traceContext } from '@kalibr/sdk';
+
+await traceContext(
+  { traceId: 'custom-trace', goal: 'summarize' },
+  async () => {
+    // Both trace ID and goal are set
+    // All nested operations inherit this context
+  }
+);
+```
+
+---
+
+### 🎨 Function Wrappers
+
+Wrap any async function with automatic tracing.
+
+#### Wrap a Function
+
+```typescript
+import { withTrace } from '@kalibr/sdk';
+
+const chat = withTrace(
+  async (prompt: string) => {
+    return openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: prompt }]
+    });
+  },
+  { operation: 'chat', provider: 'openai', model: 'gpt-4o' }
+);
+
+// Now traced automatically
+const response = await chat('Hello!');
+```
+
+#### Trace a Code Block
+
+```typescript
+import { traced } from '@kalibr/sdk';
+
+const result = await traced(
+  { operation: 'process_order', metadata: { orderId: '123' } },
+  async () => {
+    await validateOrder();
+    await processPayment();
+    await sendConfirmation();
+    return { success: true };
+  }
+);
+```
+
+---
+
+### 📦 TraceCapsule
+
+Bundle and serialize spans for distributed tracing.
+
+#### Basic Usage
+
+```typescript
+import { getOrCreateCapsule, serializeCapsule, clearCapsule } from '@kalibr/sdk';
+
+// Collect spans
+const capsule = getOrCreateCapsule();
+
+// Spans are added automatically
+const span1 = new SpanBuilder().setOperation('step1').start();
+await span1.finish();
+
+const span2 = new SpanBuilder().setOperation('step2').start();
+await span2.finish();
+
+// Serialize and send
+const json = serializeCapsule(capsule);
+await fetch('/traces', { method: 'POST', body: json });
+
+clearCapsule();
+```
+
+#### Distributed Tracing
+
+```typescript
+// Service A: Serialize and send
+const capsule = serializeCapsule(getOrCreateCapsule());
+await fetch('service-b', {
+  headers: { 'X-Trace-Capsule': capsule }
+});
+
+// Service B: Receive and continue trace
+const capsuleData = request.headers['X-Trace-Capsule'];
+const capsule = deserializeCapsule(capsuleData);
+// Continue trace with same trace_id
+```
+
+---
 
 ## Intelligence API
 
-Query Kalibr for optimal model recommendations based on historical outcomes.
+Query Kalibr's intelligence service for optimal routing decisions based on learned outcomes.
 
 ### Initialize Intelligence Client
 
 ```typescript
 import { KalibrIntelligence } from '@kalibr/sdk';
 
-// Singleton pattern (recommended)
 KalibrIntelligence.init({
   apiKey: process.env.KALIBR_API_KEY!,
   tenantId: process.env.KALIBR_TENANT_ID!,
@@ -151,19 +433,9 @@ KalibrIntelligence.init({
 ```typescript
 import { getPolicy } from '@kalibr/sdk';
 
-// Basic usage
 const policy = await getPolicy('book_meeting');
-console.log(policy.recommended_model);  // e.g., "gpt-4o"
-
-// With tool and parameter recommendations
-const policy = await getPolicy('book_meeting', {
-  includeTools: true,
-  includeParams: ['temperature'],
-  constraints: {
-    max_cost_usd: 0.05,
-    max_latency_ms: 3000,
-  },
-});
+console.log(policy.recommended_model); // 'gpt-4o'
+console.log(policy.confidence); // 0.85
 ```
 
 ### Report Outcome
@@ -173,212 +445,113 @@ import { reportOutcome } from '@kalibr/sdk';
 
 await reportOutcome(traceId, 'book_meeting', true, {
   score: 0.95,
-  metadata: { attendees: 5 },
+  metadata: { attendees: 5 }
 });
 ```
 
-### Intelligent Routing with decide()
+### Register Paths
 
 ```typescript
-import { registerPath, decide } from '@kalibr/sdk';
+import { registerPath } from '@kalibr/sdk';
 
-// Register available paths
 await registerPath('book_meeting', 'gpt-4o', {
   toolId: 'calendar_api',
-  riskLevel: 'low',
+  riskLevel: 'low'
 });
-
-// Get routing decision
-const decision = await decide('book_meeting');
-console.log(decision.model_id);     // Selected model
-console.log(decision.confidence);   // Confidence score
-console.log(decision.exploration);  // True if exploring
 ```
 
-## API Reference
-
-### Kalibr (Client)
-
-The main client class with singleton support.
+### Get Routing Decision
 
 ```typescript
-// Singleton pattern
-Kalibr.init(config);
-await Kalibr.sendSpan(span);
-await Kalibr.sendSpans([span1, span2]);
+import { decide } from '@kalibr/sdk';
 
-// Direct instantiation
-const client = new Kalibr(config);
-await client.sendSpan(span);
+const decision = await decide('book_meeting');
+console.log(decision.model_id); // Selected model
+console.log(decision.tool_id); // Recommended tool
+console.log(decision.params); // Recommended parameters
+console.log(decision.exploration); // true if exploring
 ```
 
-#### Config Options
+---
 
-| Option | Type | Required | Description |
-|--------|------|----------|-------------|
-| `apiKey` | `string` | Yes | API key for X-API-Key header |
-| `tenantId` | `string` | Yes | Your tenant identifier |
-| `endpoint` | `string` | No | API URL (default: `https://api.kalibr.systems/api/ingest`) |
-| `environment` | `'prod' \| 'staging' \| 'dev'` | No | Deployment environment |
-| `service` | `string` | No | Service name |
-| `debug` | `boolean` | No | Enable debug logging |
-| `fetch` | `typeof fetch` | No | Custom fetch implementation |
+## Advanced Usage
 
-### SpanBuilder
+### Multi-Step Workflows with Context
 
-Fluent builder for creating spans with automatic timing.
+```typescript
+import { withTraceId, withSpanContext } from '@kalibr/sdk';
+
+async function processDocument(doc: string) {
+  await withTraceId('doc-processing', async () => {
+    // Step 1: Summarize
+    const summarySpan = new SpanBuilder()
+      .setOperation('summarize')
+      .start();
+
+    const summary = await llm.summarize(doc);
+    await summarySpan.finish({...});
+
+    // Step 2: Extract entities (child of summarize)
+    await withSpanContext(summarySpan.getSpanId(), async () => {
+      const extractSpan = new SpanBuilder()
+        .setOperation('extract')
+        .start();
+
+      const entities = await llm.extract(summary);
+      await extractSpan.finish({...});
+    });
+  });
+}
+```
+
+### Custom Metadata and Tagging
 
 ```typescript
 const span = new SpanBuilder()
-  // Required
-  .setProvider('openai')           // 'openai' | 'anthropic' | 'google' | 'cohere' | 'custom'
-  .setModel('gpt-4o')              // Model ID
-  .setOperation('chat_completion') // Operation type
-
-  // Optional identity
-  .setTraceId(traceId)             // Link spans together
-  .setParentSpanId(parentId)       // Create hierarchy
-  .setTenantId(tenantId)           // Override client default
-
-  // Optional context
-  .setWorkflowId('my-workflow')
-  .setSandboxId('sandbox-123')
-  .setRuntimeEnv('vercel_vm')
-  .setEndpoint('api/chat')
+  .setProvider('openai')
+  .setModel('gpt-4o')
+  .setOperation('generate')
+  .setMetadata({
+    userId: 'user-123',
+    experiment: 'variant-A',
+    custom: { any: 'data' }
+  })
+  .setWorkflowId('document-processor')
+  .setSandboxId('sandbox-prod-1')
   .setEnvironment('prod')
-  .setService('chat-service')
-
-  // Optional user context
-  .setUserId('user-123')
-  .setRequestId('req-456')
-
-  // Optional metadata
-  .setMetadata({ custom: 'data' })
-  .setDataClass('economic')
-
-  // Start timing
+  .setService('api-server')
   .start();
 ```
 
-#### StartedSpan Methods
+### Manual Span Creation
 
 ```typescript
-// Get IDs
-span.getTraceId();  // Returns trace ID
-span.getSpanId();   // Returns span ID
+import { createSpan } from '@kalibr/sdk';
 
-// Finish successfully
-await span.finish({
-  inputTokens: 100,
-  outputTokens: 50,
-  status: 'success',      // optional, default: 'success'
-  costUsd: 0.001,         // optional, auto-calculated if omitted
-  metadata: { key: 'val' }, // optional, merged with builder metadata
-  autoSend: true,         // optional, default: true
-});
-
-// Finish with error
-await span.error(error, { inputTokens: 0, outputTokens: 0 });
-
-// Finish with timeout
-await span.timeout({ inputTokens: 100, outputTokens: 0 });
-```
-
-### Utility Functions
-
-```typescript
-import { generateId, timestamp, calculateCost, createSpan, withSpan } from '@kalibr/sdk';
-
-// Generate 32-char hex ID
-const id = generateId(); // e.g., "a1b2c3d4e5f6789012345678abcdef01"
-
-// Get ISO 8601 timestamp
-const ts = timestamp(); // e.g., "2024-01-15T10:30:00.000Z"
-
-// Calculate cost from tokens
-const cost = calculateCost('openai', 'gpt-4o', 1000, 500); // $0.0075
-
-// Create a span manually
 const span = createSpan({
   tenantId: 'my-tenant',
   provider: 'anthropic',
-  modelId: 'claude-3-opus-20240229',
+  modelId: 'claude-3-opus',
   operation: 'generate',
   durationMs: 1500,
   inputTokens: 500,
   outputTokens: 200,
+  status: 'success'
 });
 
-// Wrap a function with automatic span tracking
-const result = await withSpan(
-  { provider: 'openai', modelId: 'gpt-4o', operation: 'chat' },
-  async () => {
-    const response = await llmCall();
-    return {
-      result: response.text,
-      inputTokens: response.usage.prompt_tokens,
-      outputTokens: response.usage.completion_tokens,
-    };
-  }
-);
+await Kalibr.sendSpan(span);
 ```
 
-### KalibrSpan Type
+---
 
-Full type definition matching the Python SDK's TraceEvent:
+## Framework Integrations
 
-```typescript
-interface KalibrSpan {
-  // Required fields
-  schema_version: '1.0';
-  trace_id: string;       // min 16 chars
-  span_id: string;        // min 16 chars
-  tenant_id: string;
-  provider: 'openai' | 'anthropic' | 'google' | 'cohere' | 'custom';
-  model_id: string;
-  operation: string;
-  duration_ms: number;
-  input_tokens: number;
-  output_tokens: number;
-  cost_usd: number;
-  status: 'success' | 'error' | 'timeout';
-  timestamp: string;      // ISO 8601
-
-  // Optional fields
-  parent_span_id?: string | null;
-  workflow_id?: string | null;
-  sandbox_id?: string | null;
-  runtime_env?: string | null;
-  model_name?: string | null;
-  endpoint?: string | null;
-  latency_ms?: number | null;
-  total_tokens?: number | null;
-  total_cost_usd?: number | null;
-  unit_price_usd?: number | null;
-  error_type?: string | null;
-  error_message?: string | null;
-  stack_trace?: string | null;
-  ts_start?: string | null;
-  ts_end?: string | null;
-  environment?: 'prod' | 'staging' | 'dev' | null;
-  service?: string | null;
-  user_id?: string | null;
-  request_id?: string | null;
-  metadata?: Record<string, unknown> | null;
-  data_class?: 'economic' | 'performance' | 'diagnostic' | null;
-  vendor?: string | null;  // legacy, same as provider
-}
-```
-
-## Next.js Integration
-
-### App Router (app/layout.tsx)
+### Next.js App Router
 
 ```typescript
 // lib/kalibr.ts
 import { Kalibr } from '@kalibr/sdk';
 
-// Initialize once
 if (!Kalibr.isInitialized()) {
   Kalibr.init({
     apiKey: process.env.KALIBR_API_KEY!,
@@ -388,50 +561,193 @@ if (!Kalibr.isInitialized()) {
   });
 }
 
-export { Kalibr, SpanBuilder } from '@kalibr/sdk';
+export { Router, createTracedOpenAI } from '@kalibr/sdk';
 ```
-
-### API Route Handler
 
 ```typescript
 // app/api/chat/route.ts
-import { NextResponse } from 'next/server';
-import { SpanBuilder } from '@/lib/kalibr';
-import OpenAI from 'openai';
+import { Router } from '@/lib/kalibr';
 
-const openai = new OpenAI();
+const router = new Router({
+  goal: 'chat',
+  paths: ['gpt-4o', 'claude-3-sonnet']
+});
 
 export async function POST(request: Request) {
   const { messages } = await request.json();
 
-  const span = new SpanBuilder()
-    .setProvider('openai')
-    .setModel('gpt-4o')
-    .setOperation('chat_completion')
-    .setEndpoint('/api/chat')
-    .setRequestId(request.headers.get('x-request-id') ?? undefined)
-    .start();
+  const response = await router.completion(messages);
 
-  try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages,
-    });
-
-    await span.finish({
-      inputTokens: response.usage?.prompt_tokens ?? 0,
-      outputTokens: response.usage?.completion_tokens ?? 0,
-    });
-
-    return NextResponse.json({
-      message: response.choices[0]?.message?.content,
-    });
-  } catch (error) {
-    await span.error(error as Error, { inputTokens: 0, outputTokens: 0 });
-    return NextResponse.json({ error: 'Failed' }, { status: 500 });
-  }
+  return Response.json({
+    message: response.choices[0].message.content
+  });
 }
 ```
+
+### Vercel Edge Functions
+
+```typescript
+import { createTracedOpenAI } from '@kalibr/sdk';
+
+export const runtime = 'edge';
+
+const openai = createTracedOpenAI();
+
+export async function GET(request: Request) {
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content: 'Hello!' }]
+  });
+
+  return Response.json(response);
+}
+```
+
+---
+
+## API Reference
+
+### Router
+
+```typescript
+class Router {
+  constructor(config: RouterConfig);
+
+  completion(messages: Message[], options?: CompletionOptions): Promise<ChatCompletion>;
+  report(success: boolean, reason?: string, score?: number): Promise<void>;
+  addPath(model: string, tools?: string[], params?: Record<string, any>): Promise<void>;
+}
+
+interface RouterConfig {
+  goal: string;
+  paths?: PathSpec[];
+  successWhen?: (output: string) => boolean;
+  explorationRate?: number;
+  autoRegister?: boolean;
+}
+
+type PathSpec = string | {
+  model: string;
+  tools?: string | string[];
+  params?: Record<string, any>;
+};
+```
+
+### Auto-Instrumentation
+
+```typescript
+function createTracedOpenAI(apiKey?: string): OpenAI;
+function wrapOpenAI(client: OpenAI): OpenAI;
+
+function createTracedAnthropic(apiKey?: string): Anthropic;
+function wrapAnthropic(client: Anthropic): Anthropic;
+
+function createTracedGoogle(apiKey: string): GoogleGenerativeAI;
+function createTracedCohere(apiKey?: string): CohereClient;
+```
+
+### Context Management
+
+```typescript
+function getTraceId(): string | undefined;
+function setTraceId(traceId: string): void;
+function withTraceId<T>(traceId: string, fn: () => Promise<T>): Promise<T>;
+function newTraceId(): string;
+
+function getParentSpanId(): string | undefined;
+function setParentSpanId(spanId: string): void;
+function withSpanContext<T>(spanId: string, fn: () => Promise<T>): Promise<T>;
+
+function getGoal(): string | undefined;
+function setGoal(goal: string): void;
+function withGoal<T>(goal: string, fn: () => Promise<T>): Promise<T>;
+function clearGoal(): void;
+
+function traceContext<T>(
+  options: { traceId?: string; goal?: string },
+  fn: () => Promise<T>
+): Promise<T>;
+```
+
+### Function Wrappers
+
+```typescript
+function withTrace<T extends (...args: any[]) => Promise<any>>(
+  fn: T,
+  config: TraceConfig
+): T;
+
+function traced<T>(
+  config: TraceConfig,
+  fn: () => Promise<T>
+): Promise<T>;
+
+interface TraceConfig {
+  operation: string;
+  provider?: string;
+  model?: string;
+  metadata?: Record<string, any>;
+}
+```
+
+### SpanBuilder
+
+```typescript
+class SpanBuilder {
+  // Required
+  setProvider(provider: Provider): this;
+  setModel(model: string): this;
+  setOperation(operation: string): this;
+
+  // Optional identity
+  setTraceId(traceId: string): this;
+  setParentSpanId(parentSpanId: string): this;
+  setTenantId(tenantId: string): this;
+
+  // Optional context
+  setWorkflowId(workflowId: string): this;
+  setSandboxId(sandboxId: string): this;
+  setEnvironment(env: Environment): this;
+  setService(service: string): this;
+  setEndpoint(endpoint: string): this;
+  setUserId(userId: string): this;
+  setRequestId(requestId: string): this;
+  setMetadata(metadata: Record<string, any>): this;
+  setDataClass(dataClass: DataClass): this;
+
+  // Start timing
+  start(): StartedSpan;
+}
+
+class StartedSpan {
+  getTraceId(): string;
+  getSpanId(): string;
+
+  finish(options?: FinishOptions): Promise<void>;
+  error(error: Error, options?: FinishOptions): Promise<void>;
+  timeout(options?: FinishOptions): Promise<void>;
+}
+```
+
+### TraceCapsule
+
+```typescript
+interface TraceCapsule {
+  trace_id: string;
+  spans: KalibrSpan[];
+  metadata: Record<string, any>;
+  created_at: number;
+}
+
+function getOrCreateCapsule(): TraceCapsule;
+function addSpanToCapsule(span: KalibrSpan): void;
+function serializeCapsule(capsule: TraceCapsule): string;
+function deserializeCapsule(data: string): TraceCapsule;
+function clearCapsule(): void;
+function flushCapsule(): Promise<void>;
+```
+
+---
 
 ## Pricing Tables
 
@@ -468,17 +784,27 @@ Built-in pricing for automatic cost calculation (per 1M tokens):
 | command-r | $0.50 | $1.50 |
 | command-r-plus | $3.00 | $15.00 |
 
-## Environment Variables
-
-```bash
-KALIBR_API_KEY=your-api-key
-KALIBR_TENANT_ID=your-tenant-id
-```
+---
 
 ## Requirements
 
-- Node.js 18+ (for native fetch)
+- Node.js 18+ (for native fetch and AsyncLocalStorage)
 - TypeScript 5.0+ (optional, for type checking)
+
+## Peer Dependencies (Optional)
+
+Install only the providers you need:
+
+```bash
+npm install openai              # For OpenAI support
+npm install @anthropic-ai/sdk   # For Anthropic support
+npm install @google/generative-ai  # For Google support
+npm install cohere-ai           # For Cohere support
+```
+
+All peer dependencies are optional — only install what you use.
+
+---
 
 ## Development
 
@@ -501,7 +827,14 @@ npm run lint
 
 ## Contributing
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md).
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Support
+
+- 📧 Email: support@kalibr.systems
+- 💬 Discord: [Join our community](https://discord.gg/kalibr)
+- 📖 Docs: [docs.kalibr.systems](https://docs.kalibr.systems)
+- 🐛 Issues: [GitHub Issues](https://github.com/kalibr-ai/kalibr-sdk-ts/issues)
 
 ## License
 
@@ -509,8 +842,12 @@ Apache 2.0 — see [LICENSE](LICENSE).
 
 ## Links
 
-- [Documentation](https://kalibr.systems/docs)
-- [Kalibr Dashboard](https://dashboard.kalibr.systems)
-- [GitHub](https://github.com/kalibr-ai/kalibr-sdk-ts)
-- [npm](https://www.npmjs.com/package/@kalibr/sdk)
+- [Kalibr Platform](https://kalibr.systems)
+- [Dashboard](https://dashboard.kalibr.systems)
+- [Documentation](https://docs.kalibr.systems)
 - [Python SDK](https://github.com/kalibr-ai/kalibr-sdk-python)
+- [npm Package](https://www.npmjs.com/package/@kalibr/sdk)
+
+---
+
+**Built with ❤️ by the Kalibr team**
