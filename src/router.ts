@@ -29,6 +29,7 @@ import {
   type DecideResponse,
 } from './intelligence';
 import { generateId } from './kalibr';
+import { getTraceId, newTraceId } from './context';
 
 // ============================================================================
 // Type Definitions
@@ -479,7 +480,8 @@ export class Router {
   ): Promise<ChatCompletion> {
     // Reset outcome state for new completion
     this.outcomeReported = false;
-    this.lastTraceId = generateId();
+    // Use context trace ID if available, otherwise generate new one
+    this.lastTraceId = getTraceId() || newTraceId();
 
     let selectedModel: string;
     let decision: DecideResponse | null = null;
@@ -538,13 +540,15 @@ export class Router {
       return;
     }
 
-    if (!this.lastTraceId) {
+    // Use lastTraceId or fall back to context trace ID
+    const traceId = this.lastTraceId || getTraceId();
+    if (!traceId) {
       console.warn('[Kalibr Router] No completion to report outcome for');
       return;
     }
 
     try {
-      await reportOutcome(this.lastTraceId, this.goal, success, {
+      await reportOutcome(traceId, this.goal, success, {
         score,
         failureReason: success ? undefined : reason,
       });

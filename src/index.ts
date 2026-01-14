@@ -93,3 +93,52 @@ export {
   type Message,
   type ChatCompletion,
 } from './router';
+
+// Context Management (Phase 2)
+export {
+  getTraceId,
+  setTraceId,
+  withTraceId,
+  newTraceId,
+  getParentSpanId,
+  setParentSpanId,
+  withSpanContext,
+  getGoal,
+  setGoal,
+  withGoal,
+  clearGoal,
+  traceContext,
+} from './context';
+
+// Function Wrappers (Phase 3)
+export {
+  withTrace,
+  traced,
+  type TraceConfig,
+} from './trace';
+
+// Auto-Instrumentation (Phase 4)
+export {
+  createTracedOpenAI,
+  wrapOpenAI,
+  createTracedAnthropic,
+  wrapAnthropic,
+  createTracedGoogle,
+  createTracedCohere,
+  traceWrapper,
+  SUPPORTED_PROVIDERS,
+  type SupportedProvider,
+} from './instrumentation';
+
+// TraceCapsule (Phase 5)
+export {
+  type TraceCapsule,
+  getOrCreateCapsule,
+  addSpanToCapsule,
+  serializeCapsule,
+  deserializeCapsule,
+  clearCapsule,
+  flushCapsule,
+  getCurrentCapsule,
+  setCapsuleMetadata,
+} from './capsule';
