@@ -63,6 +63,8 @@ export interface ReportOutcomeOptions {
   toolId?: string;
   /** Parameters used during execution */
   executionParams?: Record<string, unknown>;
+  /** Model ID that was used (for tracking which model produced this outcome) */
+  modelId?: string;
 }
 
 /** Options for registerPath request */
@@ -449,6 +451,7 @@ export class KalibrIntelligence {
     if (options.metadata !== undefined) body['metadata'] = options.metadata;
     if (options.toolId !== undefined) body['tool_id'] = options.toolId;
     if (options.executionParams !== undefined) body['execution_params'] = options.executionParams;
+    if (options.modelId !== undefined) body['model_id'] = options.modelId;
 
     return this.request<OutcomeResponse>('POST', '/api/v1/intelligence/report-outcome', body);
   }
@@ -810,4 +813,94 @@ export async function getRecommendation(
   options?: GetRecommendationOptions
 ): Promise<RecommendationResponse> {
   return KalibrIntelligence.getInstance().getRecommendation(taskType, options);
+}
+
+/**
+ * List registered paths.
+ * Uses the singleton KalibrIntelligence instance.
+ *
+ * @param options - Filter options
+ * @returns List of paths
+ *
+ * @example
+ * ```typescript
+ * import { KalibrIntelligence, listPaths } from '@kalibr/sdk';
+ *
+ * KalibrIntelligence.init({ apiKey: 'key', tenantId: 'tenant' });
+ * const { paths } = await listPaths({ goal: 'summarize document' });
+ * paths.forEach(p => console.log(p.path_id, p.success_rate));
+ * ```
+ */
+export async function listPaths(
+  options?: ListPathsOptions
+): Promise<ListPathsResponse> {
+  return KalibrIntelligence.getInstance().listPaths(options);
+}
+
+/**
+ * Disable a path.
+ * Uses the singleton KalibrIntelligence instance.
+ *
+ * @param pathId - The path ID to disable
+ * @returns Disable response
+ *
+ * @example
+ * ```typescript
+ * import { KalibrIntelligence, disablePath } from '@kalibr/sdk';
+ *
+ * KalibrIntelligence.init({ apiKey: 'key', tenantId: 'tenant' });
+ * await disablePath('path-123');
+ * ```
+ */
+export async function disablePath(
+  pathId: string
+): Promise<DisablePathResponse> {
+  return KalibrIntelligence.getInstance().disablePath(pathId);
+}
+
+/**
+ * Set exploration configuration.
+ * Uses the singleton KalibrIntelligence instance.
+ *
+ * @param options - Exploration configuration options
+ * @returns Updated exploration config
+ *
+ * @example
+ * ```typescript
+ * import { KalibrIntelligence, setExplorationConfig } from '@kalibr/sdk';
+ *
+ * KalibrIntelligence.init({ apiKey: 'key', tenantId: 'tenant' });
+ * await setExplorationConfig({
+ *   goal: 'summarize document',
+ *   explorationRate: 0.1,
+ *   minSamplesBeforeExploit: 10,
+ * });
+ * ```
+ */
+export async function setExplorationConfig(
+  options: ExplorationConfigOptions
+): Promise<ExplorationConfigResponse> {
+  return KalibrIntelligence.getInstance().setExplorationConfig(options);
+}
+
+/**
+ * Get exploration configuration.
+ * Uses the singleton KalibrIntelligence instance.
+ *
+ * @param goal - Optional goal to get specific config for
+ * @returns Exploration config
+ *
+ * @example
+ * ```typescript
+ * import { KalibrIntelligence, getExplorationConfig } from '@kalibr/sdk';
+ *
+ * KalibrIntelligence.init({ apiKey: 'key', tenantId: 'tenant' });
+ * const config = await getExplorationConfig('summarize');
+ * console.log(config.exploration_rate);
+ * ```
+ */
+export async function getExplorationConfig(
+  goal?: string
+): Promise<ExplorationConfigResponse> {
+  return KalibrIntelligence.getInstance().getExplorationConfig(goal);
 }
