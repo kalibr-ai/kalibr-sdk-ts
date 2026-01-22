@@ -67,6 +67,7 @@ export {
   type ListPathsOptions,
   type DecideOptions,
   type ExplorationConfigOptions,
+  type GetRecommendationOptions,
   // Response types
   type PolicyResponse,
   type OutcomeResponse,
@@ -76,11 +77,17 @@ export {
   type DisablePathResponse,
   type DecideResponse,
   type ExplorationConfigResponse,
+  type RecommendationResponse,
   // Convenience functions
   getPolicy,
   reportOutcome,
   registerPath,
   decide,
+  getRecommendation,
+  listPaths,
+  disablePath,
+  setExplorationConfig,
+  getExplorationConfig,
 } from './intelligence';
 
 // Router exports
