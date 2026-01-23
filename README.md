@@ -8,11 +8,12 @@ Zero-dependency TypeScript SDK for Kalibr LLM observability. Track costs, latenc
 ## Features
 
 - **Zero dependencies** - Uses native `fetch`, works in Node.js 18+, Edge runtimes, and browsers
-- **Schema compatible** - Matches Kalibr Python SDK schema exactly
-- **Fluent API** - SpanBuilder with auto-timing and method chaining
-- **Cost calculation** - Built-in pricing tables for all major LLM providers
-- **Intelligence API** - Outcome-conditioned routing for optimal model selection
-- **NDJSON batching** - Efficient batch sending of multiple spans
+- **Intelligent Router** - Automatic model routing with outcome learning across OpenAI, Anthropic, Google, Cohere
+- **Execution Intelligence** - Query optimal models based on historical performance with `getPolicy()` and `decide()`
+- **Outcome Tracking** - Report success/failure to continuously improve routing decisions
+- **Auto-Instrumentation** - Wrap LLM clients for zero-config tracing
+- **Context Propagation** - Automatic trace ID and goal propagation across async boundaries
+- **Cost Calculation** - Built-in pricing tables for all major LLM providers
 - **TypeScript-first** - Full type definitions with strict mode
 
 ## Installation
@@ -130,69 +131,339 @@ async function processDocument(document: string) {
 }
 ```
 
+## Router (Recommended)
+
+The Router is the easiest way to use Kalibr. It handles model selection, tracing, and outcome reporting automatically.
+
+### Basic Usage
+
+```typescript
+import { Router } from '@kalibr/sdk';
+
+const router = new Router({
+  goal: 'summarize_article',
+  paths: ['gpt-4o', 'claude-3-sonnet', 'gemini-1.5-pro'],
+  successWhen: (output) => output.length > 100 && output.length < 500
+});
+
+// Router automatically:
+// 1. Queries intelligence API for best model
+// 2. Makes the LLM call
+// 3. Evaluates success using your callback
+// 4. Reports outcome to improve future routing
+const response = await router.completion([
+  { role: 'user', content: 'Summarize this article...' }
+]);
+
+console.log(response.choices[0].message.content);
+```
+
+### Manual Outcome Reporting
+
+For complex validation logic, omit `successWhen` and report manually:
+
+```typescript
+const router = new Router({
+  goal: 'book_meeting',
+  paths: ['gpt-4o', 'claude-3-sonnet'],
+});
+
+const response = await router.completion([
+  { role: 'user', content: 'Schedule a meeting with Alice tomorrow at 2pm' }
+]);
+
+// Your custom validation logic
+const meetingBooked = await checkCalendarAPI();
+
+// Report the outcome
+await router.report(meetingBooked, meetingBooked ? undefined : 'Calendar conflict');
+```
+
+### Advanced Path Configuration
+
+```typescript
+const router = new Router({
+  goal: 'code_review',
+  paths: [
+    { model: 'gpt-4o', tools: ['code_analyzer'], params: { temperature: 0.2 } },
+    { model: 'claude-3-opus', params: { detailed: true } },
+    'gemini-1.5-pro',  // Simple string also works
+  ],
+  explorationRate: 0.1,  // 10% exploration of new paths
+  autoRegister: true,    // Register paths with intelligence API (default)
+});
+```
+
+### Router API
+
+| Method | Description |
+|--------|-------------|
+| `completion(messages, options?)` | Make a routed completion request |
+| `report(success, reason?, score?)` | Report outcome for last completion |
+| `addPath(model, tools?, params?)` | Add a new path dynamically |
+| `getLastDecision()` | Get the last routing decision (for debugging) |
+| `getLastTraceId()` | Get the trace ID from last completion |
+
+### Forcing a Specific Model
+
+```typescript
+// Bypass routing and use a specific model
+const response = await router.completion(messages, {
+  forceModel: 'gpt-4o',
+});
+```
+
 ## Intelligence API
 
-Query Kalibr for optimal model recommendations based on historical outcomes.
+The Intelligence API provides outcome-conditioned routing - your agents learn which models work best for each goal.
 
-### Initialize Intelligence Client
+### Initialize
 
 ```typescript
 import { KalibrIntelligence } from '@kalibr/sdk';
 
-// Singleton pattern (recommended)
 KalibrIntelligence.init({
   apiKey: process.env.KALIBR_API_KEY!,
   tenantId: process.env.KALIBR_TENANT_ID!,
 });
 ```
 
-### Get Policy (Model Recommendation)
+### Core Functions
+
+#### getPolicy() - Get Model Recommendation
 
 ```typescript
 import { getPolicy } from '@kalibr/sdk';
 
-// Basic usage
-const policy = await getPolicy('book_meeting');
-console.log(policy.recommended_model);  // e.g., "gpt-4o"
-
-// With tool and parameter recommendations
 const policy = await getPolicy('book_meeting', {
-  includeTools: true,
-  includeParams: ['temperature'],
+  taskType: 'scheduling',
   constraints: {
     max_cost_usd: 0.05,
     max_latency_ms: 3000,
   },
+  windowHours: 168,  // Look at last 7 days of data
 });
+
+console.log(policy.model_id);           // Recommended model
+console.log(policy.confidence);         // Confidence score
+console.log(policy.outcome_success_rate); // Historical success rate
 ```
 
-### Report Outcome
+#### decide() - Intelligent Routing Decision
+
+```typescript
+import { decide } from '@kalibr/sdk';
+
+const decision = await decide('book_meeting', {
+  taskRiskLevel: 'low',  // 'low' | 'medium' | 'high'
+});
+
+console.log(decision.model_id);     // Selected model
+console.log(decision.tool_id);      // Selected tool (if any)
+console.log(decision.confidence);   // Confidence score
+console.log(decision.exploration);  // True if exploring new path
+console.log(decision.reason);       // Human-readable explanation
+```
+
+#### reportOutcome() - Report Success/Failure
 
 ```typescript
 import { reportOutcome } from '@kalibr/sdk';
 
 await reportOutcome(traceId, 'book_meeting', true, {
-  score: 0.95,
+  score: 0.95,              // Quality score 0-1
+  modelId: 'gpt-4o',        // Which model was used
+  toolId: 'calendar_api',   // Which tool was used
   metadata: { attendees: 5 },
+});
+
+// Report failure
+await reportOutcome(traceId, 'book_meeting', false, {
+  failureReason: 'calendar_conflict',
+  modelId: 'gpt-4o',
 });
 ```
 
-### Intelligent Routing with decide()
+#### registerPath() - Register Execution Paths
 
 ```typescript
-import { registerPath, decide } from '@kalibr/sdk';
+import { registerPath } from '@kalibr/sdk';
 
-// Register available paths
 await registerPath('book_meeting', 'gpt-4o', {
   toolId: 'calendar_api',
-  riskLevel: 'low',
+  params: { temperature: 0.3 },
+  riskLevel: 'low',  // 'low' | 'medium' | 'high'
+});
+```
+
+#### listPaths() - List Registered Paths
+
+```typescript
+import { listPaths } from '@kalibr/sdk';
+
+const { paths } = await listPaths({
+  goal: 'book_meeting',
+  includeDisabled: false,
 });
 
-// Get routing decision
-const decision = await decide('book_meeting');
-console.log(decision.model_id);     // Selected model
-console.log(decision.confidence);   // Confidence score
-console.log(decision.exploration);  // True if exploring
+paths.forEach(p => {
+  console.log(`${p.path_id}: ${p.model_id} - ${p.success_rate}% success`);
+});
+```
+
+#### disablePath() - Disable a Path
+
+```typescript
+import { disablePath } from '@kalibr/sdk';
+
+await disablePath('path-123');
+```
+
+#### getRecommendation() - Task-Based Recommendation
+
+```typescript
+import { getRecommendation } from '@kalibr/sdk';
+
+const rec = await getRecommendation('summarization', {
+  goal: 'summarize_article',
+  optimizeFor: 'quality',  // 'cost' | 'quality' | 'latency' | 'balanced'
+  windowHours: 24,
+});
+
+console.log(rec.model_id);
+console.log(rec.confidence);
+```
+
+#### Exploration Configuration
+
+```typescript
+import { setExplorationConfig, getExplorationConfig } from '@kalibr/sdk';
+
+// Configure exploration/exploitation balance
+await setExplorationConfig({
+  goal: 'book_meeting',
+  explorationRate: 0.1,           // 10% exploration
+  minSamplesBeforeExploit: 20,    // Need 20 samples before exploiting
+  rollbackThreshold: 0.3,         // Rollback if performance drops 30%
+  stalenessDays: 7,               // Re-explore after 7 days
+});
+
+// Get current config
+const config = await getExplorationConfig('book_meeting');
+console.log(config.exploration_rate);
+```
+
+## Context Management
+
+Propagate trace IDs and goals across async boundaries using AsyncLocalStorage.
+
+### Trace Context
+
+```typescript
+import { withTraceId, getTraceId, newTraceId, setTraceId } from '@kalibr/sdk';
+
+// Generate a new trace ID
+const traceId = newTraceId();
+
+// Run code within a trace context
+await withTraceId(traceId, async () => {
+  console.log(getTraceId());  // Returns traceId
+  await nestedOperation();     // Also has access to traceId
+});
+
+// Or set imperatively
+setTraceId(traceId);
+```
+
+### Goal Context
+
+```typescript
+import { withGoal, getGoal, setGoal, clearGoal } from '@kalibr/sdk';
+
+// Run code within a goal context
+await withGoal('book_meeting', async () => {
+  console.log(getGoal());  // 'book_meeting'
+  // All Kalibr operations inherit this goal
+});
+
+// Or set imperatively
+setGoal('book_meeting');
+// ... do work ...
+clearGoal();
+```
+
+### Combined Context
+
+```typescript
+import { traceContext } from '@kalibr/sdk';
+
+await traceContext(
+  { traceId: 'my-trace', goal: 'summarize' },
+  async () => {
+    // Both trace ID and goal available here
+  }
+);
+```
+
+## Auto-Instrumentation
+
+Wrap LLM clients for automatic tracing with zero code changes.
+
+### OpenAI
+
+```typescript
+import { createTracedOpenAI } from '@kalibr/sdk';
+
+// Creates a traced OpenAI client
+const openai = createTracedOpenAI();
+
+// All calls automatically traced!
+const response = await openai.chat.completions.create({
+  model: 'gpt-4o',
+  messages: [{ role: 'user', content: 'Hello!' }],
+});
+```
+
+### Anthropic
+
+```typescript
+import { createTracedAnthropic } from '@kalibr/sdk';
+
+const anthropic = createTracedAnthropic();
+
+const response = await anthropic.messages.create({
+  model: 'claude-3-sonnet-20240229',
+  max_tokens: 1024,
+  messages: [{ role: 'user', content: 'Hello!' }],
+});
+```
+
+### Google (Gemini)
+
+```typescript
+import { createTracedGoogle } from '@kalibr/sdk';
+
+const google = createTracedGoogle();
+// Use with Google Generative AI SDK
+```
+
+### Cohere
+
+```typescript
+import { createTracedCohere } from '@kalibr/sdk';
+
+const cohere = createTracedCohere();
+// Use with Cohere SDK
+```
+
+### Wrapping Existing Clients
+
+```typescript
+import { wrapOpenAI, wrapAnthropic } from '@kalibr/sdk';
+import OpenAI from 'openai';
+
+const openai = new OpenAI();
+const tracedOpenAI = wrapOpenAI(openai);
 ```
 
 ## API Reference
