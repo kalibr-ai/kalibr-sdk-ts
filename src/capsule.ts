@@ -1,24 +1,34 @@
 /**
- * Kalibr TraceCapsule
+ * Kalibr TraceCapsule - Portable JSON payload for cross-MCP trace propagation.
  *
- * Provides a container for collecting and managing spans within a trace.
- * TraceCapsule allows you to batch spans for efficient transmission
- * and provides serialization/deserialization utilities.
+ * A capsule carries observability context across agent hops, maintaining a rolling
+ * window of recent operations and aggregate metrics.
  *
  * @example
  * ```typescript
- * import { getOrCreateCapsule, addSpanToCapsule, flushCapsule } from '@kalibr/sdk';
+ * import { TraceCapsule, getOrCreateCapsule } from '@kalibr/sdk';
  *
- * // Get or create a capsule for the current trace
- * const capsule = getOrCreateCapsule();
+ * // Create new capsule
+ * const capsule = new TraceCapsule();
  *
- * // Spans are automatically added during normal operation
- * // When ready, flush the capsule to send all spans
- * await flushCapsule();
+ * // Append hop
+ * capsule.appendHop({
+ *   provider: 'openai',
+ *   operation: 'summarize',
+ *   model: 'gpt-4o',
+ *   duration_ms: 1200,
+ *   status: 'success',
+ *   cost_usd: 0.005
+ * });
+ *
+ * // Serialize for HTTP header
+ * const headerValue = capsule.toJson();
+ *
+ * // Deserialize from header
+ * const receivedCapsule = TraceCapsule.fromJson(headerValue);
  * ```
  */
 
-import type { KalibrSpan } from './kalibr';
 import { getTraceId, newTraceId } from './context';
 
 // ============================================================================
@@ -26,17 +36,258 @@ import { getTraceId, newTraceId } from './context';
 // ============================================================================
 
 /**
- * A TraceCapsule containing spans and metadata for a single trace.
+ * A hop in the capsule representing a single operation.
  */
-export interface TraceCapsule {
-  /** The trace ID for all spans in this capsule */
+export interface CapsuleHop {
+  /** LLM provider */
+  provider?: string;
+  /** Operation type */
+  operation?: string;
+  /** Model used */
+  model?: string;
+  /** Duration in milliseconds */
+  duration_ms?: number;
+  /** Execution status */
+  status?: 'success' | 'error' | 'timeout';
+  /** Cost in USD */
+  cost_usd?: number;
+  /** Input tokens */
+  input_tokens?: number;
+  /** Output tokens */
+  output_tokens?: number;
+  /** Error type if status is error */
+  error_type?: string;
+  /** Agent name for multi-agent systems */
+  agent_name?: string;
+  /** Hop index (auto-assigned) */
+  hop_index?: number;
+  /** Additional custom fields */
+  [key: string]: unknown;
+}
+
+/**
+ * Serialized TraceCapsule data structure.
+ */
+export interface TraceCapsuleData {
+  /** Unique trace identifier */
   trace_id: string;
-  /** Array of spans collected in this capsule */
-  spans: KalibrSpan[];
-  /** Custom metadata associated with the trace */
-  metadata: Record<string, any>;
-  /** Unix timestamp when the capsule was created */
-  created_at: number;
+  /** ISO 8601 timestamp of last update */
+  timestamp: string;
+  /** Cumulative cost across all hops */
+  aggregate_cost_usd: number;
+  /** Cumulative latency across all hops */
+  aggregate_latency_ms: number;
+  /** Rolling window of last N hops */
+  last_n_hops: CapsuleHop[];
+  /** Tenant identifier */
+  tenant_id?: string;
+  /** Workflow identifier */
+  workflow_id?: string;
+  /** Custom metadata */
+  metadata?: Record<string, unknown>;
+  /** Context token for this runtime session */
+  context_token?: string;
+  /** Parent runtime's context token */
+  parent_context_token?: string;
+}
+
+// ============================================================================
+// TraceCapsule Class
+// ============================================================================
+
+/**
+ * Portable JSON payload containing rolling trace history.
+ *
+ * TraceCapsule carries observability context across agent hops, maintaining a
+ * rolling window of recent operations and aggregate metrics for cross-MCP
+ * trace propagation.
+ */
+export class TraceCapsule {
+  /** Maximum number of hops to keep (keeps payload compact for HTTP headers) */
+  static readonly MAX_HOPS = 5;
+
+  /** Unique identifier for the trace chain */
+  traceId: string;
+
+  /** ISO 8601 timestamp of last update */
+  timestamp: string;
+
+  /** Cumulative cost across all hops */
+  aggregateCostUsd: number;
+
+  /** Cumulative latency across all hops */
+  aggregateLatencyMs: number;
+
+  /** Rolling window of last N hops (max 5) */
+  lastNHops: CapsuleHop[];
+
+  /** Optional tenant identifier */
+  tenantId?: string;
+
+  /** Optional workflow identifier */
+  workflowId?: string;
+
+  /** Optional custom metadata */
+  metadata: Record<string, unknown>;
+
+  /** Context token for this runtime session */
+  contextToken: string;
+
+  /** Parent runtime's context token */
+  parentContextToken?: string;
+
+  constructor(options: {
+    traceId?: string;
+    lastNHops?: CapsuleHop[];
+    aggregateCostUsd?: number;
+    aggregateLatencyMs?: number;
+    tenantId?: string;
+    workflowId?: string;
+    metadata?: Record<string, unknown>;
+    contextToken?: string;
+    parentContextToken?: string;
+  } = {}) {
+    this.traceId = options.traceId || newTraceId();
+    this.timestamp = new Date().toISOString();
+    this.aggregateCostUsd = options.aggregateCostUsd ?? 0.0;
+    this.aggregateLatencyMs = options.aggregateLatencyMs ?? 0.0;
+    this.lastNHops = options.lastNHops ?? [];
+    this.tenantId = options.tenantId;
+    this.workflowId = options.workflowId;
+    this.metadata = options.metadata ?? {};
+    this.contextToken = options.contextToken || newTraceId();
+    this.parentContextToken = options.parentContextToken;
+  }
+
+  /**
+   * Append a new hop to the capsule.
+   * Maintains a rolling window of last N hops to keep payload compact.
+   * Updates aggregate metrics automatically.
+   */
+  appendHop(hop: CapsuleHop): void {
+    const indexedHop: CapsuleHop = {
+      ...hop,
+      hop_index: this.lastNHops.length,
+    };
+
+    this.lastNHops.push(indexedHop);
+
+    if (this.lastNHops.length > TraceCapsule.MAX_HOPS) {
+      this.lastNHops.shift();
+    }
+
+    this.aggregateCostUsd += hop.cost_usd ?? 0.0;
+    this.aggregateLatencyMs += hop.duration_ms ?? 0.0;
+    this.timestamp = new Date().toISOString();
+  }
+
+  /**
+   * Get the most recent hop.
+   */
+  getLastHop(): CapsuleHop | undefined {
+    return this.lastNHops.length > 0
+      ? this.lastNHops[this.lastNHops.length - 1]
+      : undefined;
+  }
+
+  /**
+   * Get total number of hops in capsule.
+   */
+  getHopCount(): number {
+    return this.lastNHops.length;
+  }
+
+  /**
+   * Serialize capsule to JSON string for HTTP header transmission.
+   */
+  toJson(): string {
+    const data: TraceCapsuleData = {
+      trace_id: this.traceId,
+      timestamp: this.timestamp,
+      aggregate_cost_usd: Math.round(this.aggregateCostUsd * 1_000_000) / 1_000_000,
+      aggregate_latency_ms: Math.round(this.aggregateLatencyMs * 100) / 100,
+      last_n_hops: this.lastNHops,
+    };
+
+    if (this.tenantId) data.tenant_id = this.tenantId;
+    if (this.workflowId) data.workflow_id = this.workflowId;
+    if (Object.keys(this.metadata).length > 0) data.metadata = this.metadata;
+    if (this.contextToken) data.context_token = this.contextToken;
+    if (this.parentContextToken) data.parent_context_token = this.parentContextToken;
+
+    return JSON.stringify(data);
+  }
+
+  /**
+   * Convert capsule to plain object.
+   */
+  toDict(): TraceCapsuleData {
+    const data: TraceCapsuleData = {
+      trace_id: this.traceId,
+      timestamp: this.timestamp,
+      aggregate_cost_usd: this.aggregateCostUsd,
+      aggregate_latency_ms: this.aggregateLatencyMs,
+      last_n_hops: this.lastNHops,
+    };
+
+    if (this.tenantId) data.tenant_id = this.tenantId;
+    if (this.workflowId) data.workflow_id = this.workflowId;
+    if (Object.keys(this.metadata).length > 0) data.metadata = this.metadata;
+    if (this.contextToken) data.context_token = this.contextToken;
+    if (this.parentContextToken) data.parent_context_token = this.parentContextToken;
+
+    return data;
+  }
+
+  /**
+   * Deserialize capsule from JSON string.
+   */
+  static fromJson(json: string): TraceCapsule {
+    try {
+      const data: TraceCapsuleData = JSON.parse(json);
+      return new TraceCapsule({
+        traceId: data.trace_id,
+        lastNHops: data.last_n_hops ?? [],
+        aggregateCostUsd: data.aggregate_cost_usd ?? 0.0,
+        aggregateLatencyMs: data.aggregate_latency_ms ?? 0.0,
+        tenantId: data.tenant_id,
+        workflowId: data.workflow_id,
+        metadata: data.metadata,
+        contextToken: data.context_token,
+        parentContextToken: data.parent_context_token,
+      });
+    } catch (e) {
+      console.warn(`Failed to parse TraceCapsule: ${e}`);
+      return new TraceCapsule();
+    }
+  }
+
+  /**
+   * Create capsule from plain object.
+   */
+  static fromDict(data: Partial<TraceCapsuleData>): TraceCapsule {
+    return new TraceCapsule({
+      traceId: data.trace_id,
+      lastNHops: data.last_n_hops ?? [],
+      aggregateCostUsd: data.aggregate_cost_usd ?? 0.0,
+      aggregateLatencyMs: data.aggregate_latency_ms ?? 0.0,
+      tenantId: data.tenant_id,
+      workflowId: data.workflow_id,
+      metadata: data.metadata,
+    });
+  }
+
+  toString(): string {
+    const hopsSummary = this.lastNHops
+      .map((hop) => `${hop.provider ?? '?'}/${hop.operation ?? '?'}`)
+      .join(', ');
+    return (
+      `TraceCapsule[${this.traceId}]: ` +
+      `${this.lastNHops.length} hops (${hopsSummary}), ` +
+      `$${this.aggregateCostUsd.toFixed(4)}, ` +
+      `${this.aggregateLatencyMs.toFixed(0)}ms`
+    );
+  }
 }
 
 // ============================================================================
@@ -46,160 +297,75 @@ export interface TraceCapsule {
 let globalCapsule: TraceCapsule | null = null;
 
 // ============================================================================
-// Capsule Functions
+// Convenience Functions
 // ============================================================================
 
 /**
- * Get or create a TraceCapsule for the current trace.
- *
- * If a capsule already exists, it is returned. Otherwise, a new
- * capsule is created with the current trace ID (or a new one if
- * no trace context exists).
- *
- * @returns The current TraceCapsule
- *
- * @example
- * ```typescript
- * const capsule = getOrCreateCapsule();
- * console.log(capsule.trace_id);
- * console.log(capsule.spans.length);
- * ```
+ * Get existing capsule from header or create new one.
  */
-export function getOrCreateCapsule(): TraceCapsule {
+export function getOrCreateCapsule(headerValue?: string | null): TraceCapsule {
+  if (headerValue) {
+    return TraceCapsule.fromJson(headerValue);
+  }
   if (!globalCapsule) {
-    globalCapsule = {
-      trace_id: getTraceId() || newTraceId(),
-      spans: [],
-      metadata: {},
-      created_at: Date.now(),
-    };
+    globalCapsule = new TraceCapsule({
+      traceId: getTraceId() || newTraceId(),
+    });
   }
   return globalCapsule;
 }
 
 /**
- * Add a span to the current capsule.
- *
- * @param span - The span to add
- *
- * @example
- * ```typescript
- * import { addSpanToCapsule } from '@kalibr/sdk';
- *
- * // After creating a span...
- * addSpanToCapsule(completedSpan);
- * ```
- */
-export function addSpanToCapsule(span: KalibrSpan): void {
-  const capsule = getOrCreateCapsule();
-  capsule.spans.push(span);
-}
-
-/**
- * Serialize a TraceCapsule to a JSON string.
- *
- * @param capsule - The capsule to serialize
- * @returns JSON string representation
- *
- * @example
- * ```typescript
- * const capsule = getOrCreateCapsule();
- * const json = serializeCapsule(capsule);
- * // Store or transmit the JSON
- * ```
- */
-export function serializeCapsule(capsule: TraceCapsule): string {
-  return JSON.stringify(capsule);
-}
-
-/**
- * Deserialize a TraceCapsule from a JSON string.
- *
- * @param data - JSON string to deserialize
- * @returns The deserialized TraceCapsule
- *
- * @example
- * ```typescript
- * const json = '{"trace_id":"abc","spans":[],"metadata":{},"created_at":123}';
- * const capsule = deserializeCapsule(json);
- * ```
- */
-export function deserializeCapsule(data: string): TraceCapsule {
-  return JSON.parse(data);
-}
-
-/**
- * Clear the current global capsule.
- *
- * @example
- * ```typescript
- * clearCapsule();
- * // globalCapsule is now null
- * ```
- */
-export function clearCapsule(): void {
-  globalCapsule = null;
-}
-
-/**
- * Flush the current capsule (send to backend and clear).
- *
- * This function sends all collected spans to the Kalibr backend
- * and then clears the capsule. If the capsule is empty, this is
- * a no-op.
- *
- * @example
- * ```typescript
- * // After collecting spans...
- * await flushCapsule();
- * // All spans sent and capsule cleared
- * ```
- */
-export async function flushCapsule(): Promise<void> {
-  if (!globalCapsule || globalCapsule.spans.length === 0) {
-    return;
-  }
-
-  // TODO: Send to backend (for future implementation)
-  // This would use the Kalibr client to batch send all spans
-  console.debug('Flushing capsule:', {
-    trace_id: globalCapsule.trace_id,
-    span_count: globalCapsule.spans.length,
-  });
-
-  clearCapsule();
-}
-
-/**
  * Get the current capsule without creating one if it doesn't exist.
- *
- * @returns The current TraceCapsule or null
- *
- * @example
- * ```typescript
- * const capsule = getCurrentCapsule();
- * if (capsule) {
- *   console.log(`Capsule has ${capsule.spans.length} spans`);
- * }
- * ```
  */
 export function getCurrentCapsule(): TraceCapsule | null {
   return globalCapsule;
 }
 
 /**
- * Set metadata on the current capsule.
- *
- * @param key - Metadata key
- * @param value - Metadata value
- *
- * @example
- * ```typescript
- * setCapsuleMetadata('user_id', 'user-123');
- * setCapsuleMetadata('session_id', 'sess-456');
- * ```
+ * Clear the current global capsule.
  */
-export function setCapsuleMetadata(key: string, value: any): void {
+export function clearCapsule(): void {
+  globalCapsule = null;
+}
+
+/**
+ * Set metadata on the current capsule.
+ */
+export function setCapsuleMetadata(key: string, value: unknown): void {
   const capsule = getOrCreateCapsule();
   capsule.metadata[key] = value;
+}
+
+/**
+ * Serialize the current capsule to JSON.
+ */
+export function serializeCapsule(): string | undefined {
+  return globalCapsule?.toJson();
+}
+
+/**
+ * Deserialize a capsule from JSON and set as current.
+ */
+export function deserializeCapsule(json: string): TraceCapsule {
+  globalCapsule = TraceCapsule.fromJson(json);
+  return globalCapsule;
+}
+
+/**
+ * Flush the current capsule (placeholder for future backend integration).
+ */
+export async function flushCapsule(): Promise<void> {
+  if (!globalCapsule || globalCapsule.lastNHops.length === 0) {
+    return;
+  }
+  clearCapsule();
+}
+
+/**
+ * Add a hop to the current capsule.
+ */
+export function addHopToCapsule(hop: CapsuleHop): void {
+  const capsule = getOrCreateCapsule();
+  capsule.appendHop(hop);
 }

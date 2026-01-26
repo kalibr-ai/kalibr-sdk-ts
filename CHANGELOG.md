@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.11] - 2025-01-26
+
+### Changed
+- TraceCapsule rewritten to match Python SDK
+  - Now supports hop tracking with rolling window (max 5 hops)
+  - Aggregate cost/latency tracking across hops
+  - Context token propagation for cross-MCP tracing
+  - `appendHop()` method for adding operations
+- Version synced with Python SDK v1.2.11
+
+### Added
+- `CapsuleHop` interface for typed hop data
+- `TraceCapsuleData` interface for serialization
+- `addHopToCapsule()` convenience function
+- `TraceCapsule` class export (was only type before)
+
+### Removed
+- `addSpanToCapsule()` - replaced by `addHopToCapsule()`
+
 ## [1.0.0] - 2024-12-23
 
 ### Added

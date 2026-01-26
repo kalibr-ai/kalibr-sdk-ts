@@ -137,15 +137,17 @@ export {
   type SupportedProvider,
 } from './instrumentation';
 
-// TraceCapsule (Phase 5)
+// TraceCapsule (Phase 5) - Cross-MCP trace propagation
 export {
-  type TraceCapsule,
+  TraceCapsule,
+  type CapsuleHop,
+  type TraceCapsuleData,
   getOrCreateCapsule,
-  addSpanToCapsule,
+  getCurrentCapsule,
+  clearCapsule,
+  setCapsuleMetadata,
   serializeCapsule,
   deserializeCapsule,
-  clearCapsule,
   flushCapsule,
-  getCurrentCapsule,
-  setCapsuleMetadata,
+  addHopToCapsule,
 } from './capsule';
