@@ -390,6 +390,7 @@ export class Router {
   // State tracking
   private lastTraceId: string | null = null;
   private lastDecision: DecideResponse | null = null;
+  private lastModel: string | null = null;
   private outcomeReported: boolean = false;
   private initialized: boolean = false;
 
@@ -501,16 +502,57 @@ export class Router {
       }
     }
 
-    // Detect provider and make the API call
-    const provider = detectProvider(selectedModel);
-    let response: ChatCompletion;
+    // Build ordered candidate paths for fallback
+    // First: intelligence-selected path, then remaining registered paths
+    const candidatePaths: Array<{ model: string; tools?: string | string[] | null; params?: Record<string, unknown> }> = [];
 
-    try {
-      response = await this.dispatch(provider, selectedModel, messages, options);
-    } catch (err) {
-      // Report failure and rethrow
-      await this.reportFailure('provider_error', (err as Error).message);
-      throw err;
+    // Add selected path first
+    const selectedPath = this.paths.find(p => p.model === selectedModel);
+    if (selectedPath) {
+      candidatePaths.push(selectedPath);
+    }
+
+    // Add remaining paths, skipping duplicates of selected model
+    for (const path of this.paths) {
+      if (path.model !== selectedModel) {
+        candidatePaths.push(path);
+      }
+    }
+
+    // Try each candidate path with fallback
+    let lastError: Error | null = null;
+    let response: ChatCompletion | null = null;
+
+    for (let i = 0; i < candidatePaths.length; i++) {
+      const candidate = candidatePaths[i]!;
+      const isFallback = i > 0;
+
+      if (isFallback) {
+        console.warn(`[Kalibr Router] Primary path failed, trying fallback: ${candidate.model}`);
+      }
+
+      try {
+        const candidateProvider = detectProvider(candidate.model);
+        response = await this.dispatch(candidateProvider, candidate.model, messages, options);
+
+        // Success! Update last model
+        this.lastModel = candidate.model;
+        break;
+      } catch (err) {
+        lastError = err as Error;
+        console.warn(`[Kalibr Router] Model ${candidate.model} failed: ${lastError.message}`);
+
+        // Report failure for this path to enable Thompson Sampling learning
+        await this.reportFailure('provider_error', lastError.message);
+
+        // Continue to next candidate
+        continue;
+      }
+    }
+
+    // All paths failed - throw the last error
+    if (!response) {
+      throw lastError || new Error('All paths failed');
     }
 
     // Auto-evaluate outcome if callback provided
@@ -587,6 +629,13 @@ export class Router {
    */
   getLastTraceId(): string | null {
     return this.lastTraceId;
+  }
+
+  /**
+   * Get the last model that was actually used (may differ from selected if fallback occurred).
+   */
+  getLastModel(): string | null {
+    return this.lastModel;
   }
 
   // ============================================================================
