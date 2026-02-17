@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] - 2026-02-16
+
+### Fixed
+- Updated pricing table with current models (GPT-5, Claude 4/Sonnet 4, Gemini 2.0/2.5)
+- Updated normalizeModelName to handle new model naming patterns and date suffixes
+- Added o4- and chatgpt- prefix detection in Router's detectProvider()
+
+### Changed
+- Version synced with Python SDK v1.4.3
+
 ## [1.4.0] - 2026-02-02
 
 ### Added

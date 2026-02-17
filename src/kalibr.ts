@@ -196,25 +196,41 @@ interface ModelPricing {
 /** Pricing tables matching cost_adapter.py */
 const PRICING: Record<string, Record<string, ModelPricing>> = {
   openai: {
+    'gpt-5': { input: 5.0, output: 15.0 },
+    'gpt-5-turbo': { input: 2.5, output: 7.5 },
     'gpt-4': { input: 30.0, output: 60.0 },
     'gpt-4-turbo': { input: 10.0, output: 30.0 },
     'gpt-4o': { input: 2.5, output: 10.0 },
-    'gpt-3.5-turbo': { input: 0.5, output: 1.5 },
     'gpt-4o-mini': { input: 0.15, output: 0.6 },
+    'gpt-3.5-turbo': { input: 0.5, output: 1.5 },
+    'gpt-3.5-turbo-16k': { input: 1.0, output: 2.0 },
   },
   anthropic: {
+    'claude-4-opus': { input: 15.0, output: 75.0 },
+    'claude-4-sonnet': { input: 3.0, output: 15.0 },
+    'claude-sonnet-4': { input: 3.0, output: 15.0 },
+    'claude-3-7-sonnet': { input: 3.0, output: 15.0 },
+    'claude-3-5-sonnet': { input: 3.0, output: 15.0 },
     'claude-3-opus': { input: 15.0, output: 75.0 },
     'claude-3-sonnet': { input: 3.0, output: 15.0 },
     'claude-3-haiku': { input: 0.25, output: 1.25 },
-    'claude-3.5-sonnet': { input: 3.0, output: 15.0 },
+    'claude-2.1': { input: 8.0, output: 24.0 },
+    'claude-2.0': { input: 8.0, output: 24.0 },
+    'claude-instant-1.2': { input: 0.8, output: 2.4 },
   },
   google: {
-    'gemini-pro': { input: 1.25, output: 5.0 },
+    'gemini-2.5-pro': { input: 1.25, output: 5.0 },
+    'gemini-2.5-flash': { input: 0.075, output: 0.3 },
+    'gemini-2.0-flash': { input: 0.075, output: 0.3 },
+    'gemini-2.0-flash-thinking': { input: 0.075, output: 0.3 },
     'gemini-1.5-pro': { input: 1.25, output: 5.0 },
     'gemini-1.5-flash': { input: 0.075, output: 0.3 },
+    'gemini-1.5-flash-8b': { input: 0.0375, output: 0.15 },
+    'gemini-1.0-pro': { input: 0.5, output: 1.5 },
+    'gemini-pro': { input: 0.5, output: 1.5 },
   },
   cohere: {
-    command: { input: 1.0, output: 2.0 },
+    'command': { input: 1.0, output: 2.0 },
     'command-r': { input: 0.5, output: 1.5 },
     'command-r-plus': { input: 3.0, output: 15.0 },
   },
@@ -224,31 +240,62 @@ const PRICING: Record<string, Record<string, ModelPricing>> = {
 const DEFAULT_PRICING: ModelPricing = { input: 30.0, output: 60.0 };
 
 /**
+ * Strip date suffixes (e.g., -20250929, -2024-05-13) from model names.
+ * Matches the Python SDK's approach to normalizing model identifiers.
+ */
+function stripDateSuffix(model: string): string {
+  // Strip -YYYYMMDD (compact) or -YYYY-MM-DD (hyphenated) date suffixes
+  return model.replace(/-\d{4}-?\d{2}-?\d{2}$/, '');
+}
+
+/**
  * Normalize model name to match pricing table.
  */
 function normalizeModelName(provider: Provider, modelName: string): string {
-  const modelLower = modelName.toLowerCase();
+  const modelLower = stripDateSuffix(modelName.toLowerCase());
 
   if (provider === 'openai') {
     if (modelLower.includes('gpt-4o-mini')) return 'gpt-4o-mini';
     if (modelLower.includes('gpt-4o')) return 'gpt-4o';
     if (modelLower.includes('gpt-4-turbo')) return 'gpt-4-turbo';
     if (modelLower.includes('gpt-4')) return 'gpt-4';
+    if (modelLower.includes('gpt-5-turbo')) return 'gpt-5-turbo';
+    if (modelLower.includes('gpt-5')) return 'gpt-5';
+    if (modelLower.includes('gpt-3.5-turbo-16k')) return 'gpt-3.5-turbo-16k';
     if (modelLower.includes('gpt-3.5')) return 'gpt-3.5-turbo';
+    // o1-, o3-, o4- models: return as-is (no pricing entries yet)
+    if (modelLower.startsWith('o1-') || modelLower.startsWith('o3-') || modelLower.startsWith('o4-')) {
+      return modelLower;
+    }
   }
 
   if (provider === 'anthropic') {
+    if (modelLower.includes('claude-4-opus')) return 'claude-4-opus';
+    if (modelLower.includes('claude-4-sonnet')) return 'claude-4-sonnet';
+    if (modelLower.includes('claude-sonnet-4')) return 'claude-sonnet-4';
+    if (modelLower.includes('claude-3.7-sonnet') || modelLower.includes('claude-3-7-sonnet')) {
+      return 'claude-3-7-sonnet';
+    }
     if (modelLower.includes('claude-3.5-sonnet') || modelLower.includes('claude-3-5-sonnet')) {
-      return 'claude-3.5-sonnet';
+      return 'claude-3-5-sonnet';
     }
     if (modelLower.includes('claude-3-opus')) return 'claude-3-opus';
     if (modelLower.includes('claude-3-sonnet')) return 'claude-3-sonnet';
     if (modelLower.includes('claude-3-haiku')) return 'claude-3-haiku';
+    if (modelLower.includes('claude-2.1')) return 'claude-2.1';
+    if (modelLower.includes('claude-2.0') || modelLower.includes('claude-2')) return 'claude-2.0';
+    if (modelLower.includes('claude-instant-1.2') || modelLower.includes('claude-instant')) return 'claude-instant-1.2';
   }
 
   if (provider === 'google') {
+    if (modelLower.includes('gemini-2.5-pro')) return 'gemini-2.5-pro';
+    if (modelLower.includes('gemini-2.5-flash')) return 'gemini-2.5-flash';
+    if (modelLower.includes('gemini-2.0-flash-thinking')) return 'gemini-2.0-flash-thinking';
+    if (modelLower.includes('gemini-2.0-flash')) return 'gemini-2.0-flash';
+    if (modelLower.includes('gemini-1.5-flash-8b')) return 'gemini-1.5-flash-8b';
     if (modelLower.includes('gemini-1.5-flash')) return 'gemini-1.5-flash';
     if (modelLower.includes('gemini-1.5-pro')) return 'gemini-1.5-pro';
+    if (modelLower.includes('gemini-1.0-pro')) return 'gemini-1.0-pro';
     if (modelLower.includes('gemini-pro')) return 'gemini-pro';
   }
 
