@@ -157,7 +157,9 @@ function detectProvider(model: string): LLMProvider {
   if (
     modelLower.startsWith('gpt-') ||
     modelLower.startsWith('o1-') ||
-    modelLower.startsWith('o3-')
+    modelLower.startsWith('o3-') ||
+    modelLower.startsWith('o4-') ||
+    modelLower.startsWith('chatgpt-')
   ) {
     return 'openai';
   }
@@ -179,7 +181,7 @@ function detectProvider(model: string): LLMProvider {
 
   throw new Error(
     `Cannot determine provider for model: ${model}. ` +
-      'Supported prefixes: gpt-, o1-, o3- (OpenAI), claude- (Anthropic), ' +
+      'Supported prefixes: gpt-, o1-, o3-, o4-, chatgpt- (OpenAI), claude- (Anthropic), ' +
       'gemini-, models/gemini (Google), command (Cohere)'
   );
 }
