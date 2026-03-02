@@ -497,6 +497,9 @@ export class Router {
         decision = await decide(this.goal);
         this.lastDecision = decision;
         selectedModel = decision.model_id;
+        if (decision.trace_id) {
+          this.lastTraceId = decision.trace_id;
+        }
       } catch (err) {
         // Fallback to first path if routing fails
         console.warn('[Kalibr Router] Routing failed, using fallback:', (err as Error).message);
@@ -509,7 +512,14 @@ export class Router {
     const candidatePaths: Array<{ model: string; tools?: string | string[] | null; params?: Record<string, unknown> }> = [];
 
     // Add selected path first
-    const selectedPath = this.paths.find(p => p.model === selectedModel);
+    let selectedPath = this.paths.find(p => p.model === selectedModel);
+    if (!selectedPath && decision) {
+      selectedPath = {
+        model: selectedModel,
+        tools: decision.tool_id || null,
+        params: decision.params || {},
+      };
+    }
     if (selectedPath) {
       candidatePaths.push(selectedPath);
     }
@@ -561,7 +571,7 @@ export class Router {
     if (this.successWhen && !this.outcomeReported) {
       const output = response.choices[0]?.message?.content || '';
       const success = this.successWhen(output);
-      await this.report(success, success ? undefined : 'Output did not meet success criteria');
+      await this.report(success, success ? undefined : 'Output did not meet success criteria', undefined, undefined);
     }
 
     return response;
@@ -577,7 +587,8 @@ export class Router {
   async report(
     success: boolean,
     reason?: string,
-    score?: number
+    score?: number,
+    failureCategory?: string
   ): Promise<void> {
     if (this.outcomeReported) {
       console.warn('[Kalibr Router] Outcome already reported for this completion');
@@ -591,10 +602,19 @@ export class Router {
       return;
     }
 
+    if (failureCategory) {
+      const { FAILURE_CATEGORIES } = await import('./intelligence');
+      if (!FAILURE_CATEGORIES.includes(failureCategory as any)) {
+        throw new Error(`Invalid failure_category '${failureCategory}'. Must be one of: ${FAILURE_CATEGORIES.join(', ')}`);
+      }
+    }
+
     try {
       await reportOutcome(traceId, this.goal, success, {
         score,
         failureReason: success ? undefined : reason,
+        failureCategory,
+        modelId: this.lastModel ?? undefined,
       });
       this.outcomeReported = true;
     } catch (err) {
