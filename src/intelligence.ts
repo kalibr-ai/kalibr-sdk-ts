@@ -65,6 +65,8 @@ export interface ReportOutcomeOptions {
   executionParams?: Record<string, unknown>;
   /** Model ID that was used (for tracking which model produced this outcome) */
   modelId?: string;
+  /** Category of failure (e.g., 'timeout', 'rate_limited') */
+  failureCategory?: string;
 }
 
 /** Options for registerPath request */
@@ -193,6 +195,8 @@ export interface DisablePathResponse {
 
 /** Response from decide */
 export interface DecideResponse {
+  /** Trace ID for this decision */
+  trace_id: string;
   /** Selected path ID */
   path_id: string;
   /** Selected model ID */
@@ -258,6 +262,16 @@ export interface RecommendationResponse {
   /** Number of samples this recommendation is based on */
   sample_count?: number;
 }
+
+/** All recognized failure categories for outcome reporting */
+export const FAILURE_CATEGORIES = [
+  "timeout", "context_exceeded", "tool_error", "rate_limited",
+  "validation_failed", "hallucination_detected", "user_unsatisfied",
+  "empty_response", "malformed_output", "auth_error", "provider_error", "unknown"
+] as const;
+
+/** Union type of all recognized failure category strings */
+export type FailureCategory = typeof FAILURE_CATEGORIES[number];
 
 // ============================================================================
 // KalibrIntelligence Client Class
@@ -452,6 +466,7 @@ export class KalibrIntelligence {
     if (options.toolId !== undefined) body['tool_id'] = options.toolId;
     if (options.executionParams !== undefined) body['execution_params'] = options.executionParams;
     if (options.modelId !== undefined) body['model_id'] = options.modelId;
+    if (options.failureCategory !== undefined) body['failure_category'] = options.failureCategory;
 
     return this.request<OutcomeResponse>('POST', '/api/v1/intelligence/report-outcome', body);
   }
