@@ -78,6 +78,9 @@ export {
   type DecideResponse,
   type ExplorationConfigResponse,
   type RecommendationResponse,
+  // Failure categories
+  FAILURE_CATEGORIES,
+  type FailureCategory,
   // Convenience functions
   getPolicy,
   reportOutcome,
