@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-03-02
+
+### Added
+- failure_category parameter to Router.report() for structured failure tracking
+- FAILURE_CATEGORIES constant and FailureCategory type (matches Python SDK)
+- Validation of failure_category values before API submission
+
+### Fixed
+- Router.completion() now uses decision.trace_id from intelligence service (outcomes correctly linked to decisions)
+- Router.completion() handles intelligence-selected models not in local paths
+- Router.report() now sends model_id to intelligence service
+- ReportOutcomeOptions includes failureCategory field
+
 ## [1.4.3] - 2026-02-16
 
 ### Fixed
