@@ -2,7 +2,7 @@
 
 Zero-dependency TypeScript SDK for Kalibr LLM observability. Track costs, latency, and token usage across OpenAI, Anthropic, Google, and Cohere models.
 
-[![npm version](https://img.shields.io/npm/v/@kalibr/sdk)](https://www.npmjs.com/package/@kalibr/sdk)
+[![npm version](https://img.shields.io/badge/npm-v1.5.0-blue)](https://www.npmjs.com/package/@kalibr/sdk)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ## Features
@@ -177,6 +177,23 @@ const meetingBooked = await checkCalendarAPI();
 
 // Report the outcome
 await router.report(meetingBooked, meetingBooked ? undefined : 'Calendar conflict');
+```
+
+### With failure categories
+
+Tell Kalibr why something failed so routing decisions are made against root cause,
+not just success rate:
+
+```typescript
+import { Router, FAILURE_CATEGORIES } from '@kalibr/sdk';
+
+// ["timeout", "context_exceeded", "tool_error", "rate_limited",
+//  "validation_failed", "hallucination_detected", "user_unsatisfied",
+//  "empty_response", "malformed_output", "auth_error", "provider_error", "unknown"]
+
+await router.report(false, "hit provider limit", undefined, "rate_limited");
+
+// Invalid categories throw Error immediately
 ```
 
 ### Advanced Path Configuration
