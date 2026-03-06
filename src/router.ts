@@ -671,6 +671,11 @@ export class Router {
   }
 
   /**
+   * @alias completion
+   */
+  complete = this.completion.bind(this);
+
+  /**
    * Get the last routing decision for debugging.
    */
   getLastDecision(): DecideResponse | null {
