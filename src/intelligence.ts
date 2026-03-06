@@ -209,8 +209,24 @@ export interface DecideResponse {
   reason: string;
   /** Confidence score (0-1) */
   confidence: number;
-  /** Whether this is an exploration decision */
-  exploration: boolean;
+  /**
+   * Whether this is an exploration decision.
+   *
+   * **Field name note:** The Python SDK and newer backend versions return this
+   * field as `is_exploration`, while earlier versions used `exploration`.
+   * Both fields are accepted here as optional so the SDK works with either
+   * backend variant. Consumers should check `is_exploration ?? exploration`
+   * to read the value reliably.
+   */
+  exploration?: boolean;
+  /**
+   * Whether this is an exploration decision (alternative field name).
+   *
+   * Newer backend versions (and the Python SDK) return `is_exploration`
+   * instead of `exploration`. Both are kept optional for backwards
+   * compatibility. Prefer reading `is_exploration ?? exploration`.
+   */
+  is_exploration?: boolean;
   /** Historical success rate */
   success_rate?: number;
   /** Number of samples this decision is based on */
@@ -612,7 +628,7 @@ export class KalibrIntelligence {
    *
    * console.log(decision.model_id);    // Selected model
    * console.log(decision.confidence);  // Confidence score
-   * console.log(decision.exploration); // Whether this is exploration
+   * console.log(decision.is_exploration ?? decision.exploration); // Whether this is exploration
    * ```
    */
   async decide(
