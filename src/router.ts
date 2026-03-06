@@ -500,6 +500,11 @@ export class Router {
         if (decision.trace_id) {
           this.lastTraceId = decision.trace_id;
         }
+        // Log exploration status for debugging (handles both field name variants)
+        const isExploration = decision.is_exploration ?? decision.exploration;
+        if (isExploration) {
+          console.warn(`[Kalibr Router] Exploration decision for goal '${this.goal}': model=${selectedModel}`);
+        }
       } catch (err) {
         // Fallback to first path if routing fails
         console.warn('[Kalibr Router] Routing failed, using fallback:', (err as Error).message);
