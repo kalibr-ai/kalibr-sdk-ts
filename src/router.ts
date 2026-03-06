@@ -19,6 +19,7 @@
  * ]);
  *
  * console.log(response.choices[0].message.content);
+ * console.log(response.kalibr_trace_id); // trace ID for reporting
  * ```
  */
 
@@ -132,6 +133,17 @@ export interface ChatCompletion {
     /** Total tokens used */
     total_tokens: number;
   };
+}
+
+/**
+ * A ChatCompletion response enriched with a Kalibr trace ID.
+ *
+ * Returned by {@link Router.completion} so callers can pass the trace ID
+ * to {@link Router.report} or any other downstream tracking.
+ */
+export interface KalibrChatCompletion extends ChatCompletion {
+  /** Kalibr trace ID associated with this completion */
+  kalibr_trace_id: string;
 }
 
 // ============================================================================
@@ -475,12 +487,21 @@ export class Router {
    *
    * @param messages - Array of conversation messages
    * @param options - Completion options
-   * @returns OpenAI-compatible ChatCompletion response
+   * @returns OpenAI-compatible ChatCompletion response with `kalibr_trace_id`
+   *
+   * @example
+   * ```typescript
+   * const response = await router.completion([
+   *   { role: 'user', content: 'Summarize this article...' }
+   * ]);
+   * console.log(response.choices[0].message.content);
+   * console.log(response.kalibr_trace_id); // pass to report() if needed
+   * ```
    */
   async completion(
     messages: Message[],
     options: CompletionOptions = {}
-  ): Promise<ChatCompletion> {
+  ): Promise<KalibrChatCompletion> {
     // Reset outcome state for new completion
     this.outcomeReported = false;
     // Use context trace ID if available, otherwise generate new one
@@ -572,14 +593,19 @@ export class Router {
       throw lastError || new Error('All paths failed');
     }
 
+    // Attach trace ID to the response so callers can forward it
+    const enrichedResponse: KalibrChatCompletion = Object.assign(response, {
+      kalibr_trace_id: this.lastTraceId!,
+    });
+
     // Auto-evaluate outcome if callback provided
     if (this.successWhen && !this.outcomeReported) {
-      const output = response.choices[0]?.message?.content || '';
+      const output = enrichedResponse.choices[0]?.message?.content || '';
       const success = this.successWhen(output);
       await this.report(success, success ? undefined : 'Output did not meet success criteria', undefined, undefined);
     }
 
-    return response;
+    return enrichedResponse;
   }
 
   /**

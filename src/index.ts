@@ -107,6 +107,7 @@ export {
   type CompletionOptions,
   type Message,
   type ChatCompletion,
+  type KalibrChatCompletion,
 } from './router';
 
 // Context Management (Phase 2)
