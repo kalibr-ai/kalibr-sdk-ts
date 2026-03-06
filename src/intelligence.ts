@@ -233,6 +233,46 @@ export interface ExplorationConfigResponse {
   exploration_on_high_risk: boolean;
 }
 
+/** Options for updateOutcome request */
+export interface UpdateOutcomeOptions {
+  /** Whether the operation succeeded */
+  success?: boolean;
+  /** Numeric score for the outcome (0-1) */
+  score?: number;
+  /** Reason for failure if success is false */
+  failureReason?: string;
+  /** Category of failure (e.g., 'timeout', 'rate_limited') */
+  failureCategory?: string;
+  /** Additional metadata about the outcome */
+  metadata?: Record<string, unknown>;
+}
+
+/** Response from updateOutcome */
+export interface UpdateOutcomeResponse {
+  /** Status of the update */
+  status: string;
+  /** Trace ID that was updated */
+  trace_id: string;
+  /** Goal that was updated */
+  goal: string;
+  /** List of fields that were updated */
+  fields_updated: string[];
+}
+
+/** Response from getInsights */
+export interface InsightsResponse {
+  /** Schema version */
+  schema_version: string;
+  /** Tenant ID */
+  tenant_id: string;
+  /** Timestamp when insights were generated */
+  generated_at: string;
+  /** Per-goal insights */
+  goals: unknown[];
+  /** Cross-goal summary */
+  cross_goal_summary: unknown;
+}
+
 /** Options for getRecommendation request */
 export interface GetRecommendationOptions {
   /** Goal for the recommendation */
@@ -693,6 +733,92 @@ export class KalibrIntelligence {
 
     return this.request<RecommendationResponse>('POST', '/api/v1/intelligence/recommend', body);
   }
+
+  /**
+   * Update the outcome of a previously reported trace.
+   *
+   * Allows updating specific fields of an outcome after initial reporting,
+   * such as adding a score or failure details that become available later.
+   *
+   * @param traceId - The trace ID to update
+   * @param goal - The goal associated with the trace
+   * @param options - Fields to update
+   * @returns Update outcome response with list of fields updated
+   *
+   * @example
+   * ```typescript
+   * const result = await intelligence.updateOutcome(traceId, 'summarize document', {
+   *   score: 0.85,
+   *   metadata: { revisedBy: 'human' },
+   * });
+   * console.log(result.fields_updated); // ['score', 'metadata']
+   * ```
+   */
+  async updateOutcome(
+    traceId: string,
+    goal: string,
+    options: UpdateOutcomeOptions = {}
+  ): Promise<UpdateOutcomeResponse> {
+    if (options.failureCategory !== undefined) {
+      if (!(FAILURE_CATEGORIES as readonly string[]).includes(options.failureCategory)) {
+        throw new Error(
+          `Invalid failure category '${options.failureCategory}'. Must be one of: ${FAILURE_CATEGORIES.join(', ')}`
+        );
+      }
+    }
+
+    const body: Record<string, unknown> = {
+      trace_id: traceId,
+      goal,
+    };
+
+    if (options.success !== undefined) body['success'] = options.success;
+    if (options.score !== undefined) body['score'] = options.score;
+    if (options.failureReason !== undefined) body['failure_reason'] = options.failureReason;
+    if (options.failureCategory !== undefined) body['failure_category'] = options.failureCategory;
+    if (options.metadata !== undefined) body['metadata'] = options.metadata;
+
+    return this.request<UpdateOutcomeResponse>('POST', '/api/v1/intelligence/update-outcome', body);
+  }
+
+  /**
+   * Get performance insights across goals.
+   *
+   * Returns aggregated insights including success rates, failure patterns,
+   * and cross-goal summaries for the configured tenant.
+   *
+   * @param goal - Optional goal to filter insights for
+   * @param windowHours - Time window in hours (default: 168, i.e., 7 days)
+   * @returns Insights response with per-goal and cross-goal data
+   *
+   * @example
+   * ```typescript
+   * // Get all insights for the last 7 days
+   * const insights = await intelligence.getInsights();
+   *
+   * // Get insights for a specific goal over 24 hours
+   * const goalInsights = await intelligence.getInsights('summarize document', 24);
+   * ```
+   */
+  async getInsights(
+    goal?: string,
+    windowHours?: number
+  ): Promise<InsightsResponse> {
+    const params = new URLSearchParams();
+
+    const hours = windowHours ?? 168;
+    params.set('window_hours', String(hours));
+
+    if (goal !== undefined) {
+      params.set('goal', goal);
+    }
+
+    const queryString = params.toString();
+    return this.request<InsightsResponse>(
+      'GET',
+      `/api/v1/intelligence/insights${queryString ? `?${queryString}` : ''}`
+    );
+  }
 }
 
 // ============================================================================
@@ -918,4 +1044,56 @@ export async function getExplorationConfig(
   goal?: string
 ): Promise<ExplorationConfigResponse> {
   return KalibrIntelligence.getInstance().getExplorationConfig(goal);
+}
+
+/**
+ * Update the outcome of a previously reported trace.
+ * Uses the singleton KalibrIntelligence instance.
+ *
+ * @param traceId - The trace ID to update
+ * @param goal - The goal associated with the trace
+ * @param options - Fields to update
+ * @returns Update outcome response with list of fields updated
+ *
+ * @example
+ * ```typescript
+ * import { KalibrIntelligence, updateOutcome } from '@kalibr/sdk';
+ *
+ * KalibrIntelligence.init({ apiKey: 'key', tenantId: 'tenant' });
+ * const result = await updateOutcome(traceId, 'summarize document', {
+ *   score: 0.85,
+ * });
+ * console.log(result.fields_updated);
+ * ```
+ */
+export async function updateOutcome(
+  traceId: string,
+  goal: string,
+  options?: UpdateOutcomeOptions
+): Promise<UpdateOutcomeResponse> {
+  return KalibrIntelligence.getInstance().updateOutcome(traceId, goal, options);
+}
+
+/**
+ * Get performance insights across goals.
+ * Uses the singleton KalibrIntelligence instance.
+ *
+ * @param goal - Optional goal to filter insights for
+ * @param windowHours - Time window in hours (default: 168, i.e., 7 days)
+ * @returns Insights response with per-goal and cross-goal data
+ *
+ * @example
+ * ```typescript
+ * import { KalibrIntelligence, getInsights } from '@kalibr/sdk';
+ *
+ * KalibrIntelligence.init({ apiKey: 'key', tenantId: 'tenant' });
+ * const insights = await getInsights();
+ * console.log(insights.goals);
+ * ```
+ */
+export async function getInsights(
+  goal?: string,
+  windowHours?: number
+): Promise<InsightsResponse> {
+  return KalibrIntelligence.getInstance().getInsights(goal, windowHours);
 }
