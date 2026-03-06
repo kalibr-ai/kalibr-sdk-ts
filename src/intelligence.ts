@@ -667,7 +667,7 @@ export class KalibrIntelligence {
   ): Promise<ExplorationConfigResponse> {
     const body: Record<string, unknown> = {};
 
-    if (options.goal !== undefined) body['goal'] = options.goal;
+    body['goal'] = options.goal ?? '*';
     if (options.explorationRate !== undefined) body['exploration_rate'] = options.explorationRate;
     if (options.minSamplesBeforeExploit !== undefined) body['min_samples_before_exploit'] = options.minSamplesBeforeExploit;
     if (options.rollbackThreshold !== undefined) body['rollback_threshold'] = options.rollbackThreshold;
