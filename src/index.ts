@@ -160,3 +160,6 @@ export {
   flushCapsule,
   addHopToCapsule,
 } from './capsule';
+
+// PII Utilities
+export { redactText, hashText, redactAndHash } from './redaction';
