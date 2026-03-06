@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-03-05
+
+### Added
+- `updateOutcome()` — update late-arriving outcome signals after initial report (e.g. customer reopened ticket 48hrs later)
+- `getInsights()` — structured per-goal diagnostics: health status, failure mode breakdowns, path comparisons, actionable signals
+- `KalibrChatCompletion` type — extends ChatCompletion with `kalibr_trace_id: string` so callers can pass it directly to `report()`
+- `Router.complete()` — alias for `Router.completion()` matching Python SDK naming
+- `redactText()`, `hashText()`, `redactAndHash()` — PII redaction utilities in src/redaction.ts (emails, phones, SSNs, credit cards, IPs)
+
+### Fixed
+- `Router.report()` now throws `Error` instead of silently warning when called before `completion()` — matches Python SDK behavior
+- `setExplorationConfig()` now sends goal `"*"` as default when no goal specified, enabling global config (previously omitted the field entirely)
+- `DecideResponse` now includes both `exploration` and `is_exploration` fields to handle backend version differences
+
 ## [1.5.0] - 2026-03-02
 
 ### Added
