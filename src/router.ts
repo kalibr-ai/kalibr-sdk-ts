@@ -583,6 +583,7 @@ export class Router {
    * @param success - Whether the completion was successful
    * @param reason - Optional reason for failure
    * @param score - Optional numeric score (0-1)
+   * @throws Error if called before `completion()` (no trace ID available)
    */
   async report(
     success: boolean,
@@ -598,8 +599,7 @@ export class Router {
     // Use lastTraceId or fall back to context trace ID
     const traceId = this.lastTraceId || getTraceId();
     if (!traceId) {
-      console.warn('[Kalibr Router] No completion to report outcome for');
-      return;
+      throw new Error('Must call completion() before report(). No trace_id available.');
     }
 
     if (failureCategory) {
