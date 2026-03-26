@@ -108,6 +108,8 @@ export {
   type Message,
   type ChatCompletion,
   type KalibrChatCompletion,
+  type HFTask,
+  HF_SUPPORTED_TASKS,
 } from './router';
 
 // Context Management (Phase 2)

@@ -63,6 +63,8 @@ export interface RouterConfig {
   paths?: PathSpec[];
   /** Callback to evaluate if output is successful (enables auto-reporting) */
   successWhen?: (output: string) => boolean;
+  /** Callback for continuous quality scoring (0.0-1.0). Takes priority over successWhen. */
+  scoreWhen?: (output: string) => number;
   /** Exploration rate for the routing algorithm (0-1) */
   explorationRate?: number;
   /** Whether to auto-register paths on init (default: true) */
@@ -153,7 +155,7 @@ export interface KalibrChatCompletion extends ChatCompletion {
 /**
  * Supported LLM providers.
  */
-type LLMProvider = 'openai' | 'anthropic' | 'google' | 'cohere';
+type LLMProvider = 'openai' | 'anthropic' | 'google' | 'cohere' | 'deepseek' | 'huggingface';
 
 /**
  * Detect the provider from a model identifier.
@@ -191,10 +193,21 @@ function detectProvider(model: string): LLMProvider {
     return 'cohere';
   }
 
+  // DeepSeek models
+  if (modelLower.startsWith("deepseek-")) {
+    return "deepseek";
+  }
+
+  // HuggingFace models (org/model format, e.g. "meta-llama/Llama-3.3-70B-Instruct")
+  if (modelLower.includes("/") && !modelLower.startsWith("models/")) {
+    return "huggingface";
+  }
+
   throw new Error(
     `Cannot determine provider for model: ${model}. ` +
       'Supported prefixes: gpt-, o1-, o3-, o4-, chatgpt- (OpenAI), claude- (Anthropic), ' +
-      'gemini-, models/gemini (Google), command (Cohere)'
+      'gemini-, models/gemini (Google), command (Cohere), deepseek- (DeepSeek), ' +
+      'org/model (HuggingFace)'
   );
 }
 
@@ -355,6 +368,32 @@ function convertCohereResponse(
   };
 }
 
+/**
+ * HuggingFace task types supported by router.execute().
+ * Matches PATCHED_METHODS in the Python SDK huggingface_instr.py exactly.
+ */
+export const HF_SUPPORTED_TASKS = [
+  "chat_completion",
+  "text_generation",
+  "automatic_speech_recognition",
+  "text_to_speech",
+  "text_to_image",
+  "feature_extraction",
+  "text_classification",
+  "translation",
+  "summarization",
+  "token_classification",
+  "fill_mask",
+  "audio_classification",
+  "image_to_text",
+  "image_classification",
+  "image_segmentation",
+  "object_detection",
+  "table_question_answering",
+] as const;
+
+export type HFTask = typeof HF_SUPPORTED_TASKS[number];
+
 // ============================================================================
 // Router Class
 // ============================================================================
@@ -397,6 +436,7 @@ export class Router {
   private readonly goal: string;
   private readonly paths: PathConfig[];
   private readonly successWhen?: (output: string) => boolean;
+  private readonly scoreWhen?: (output: string) => number;
   /** Exploration rate for routing decisions (stored for future use) */
   readonly explorationRate: number;
   private readonly autoRegister: boolean;
@@ -417,6 +457,7 @@ export class Router {
     this.goal = config.goal;
     this.paths = (config.paths || []).map(normalizePath);
     this.successWhen = config.successWhen;
+    this.scoreWhen = config.scoreWhen;
     this.explorationRate = config.explorationRate ?? 0.1;
     this.autoRegister = config.autoRegister ?? true;
 
@@ -598,14 +639,110 @@ export class Router {
       kalibr_trace_id: this.lastTraceId!,
     });
 
-    // Auto-evaluate outcome if callback provided
-    if (this.successWhen && !this.outcomeReported) {
-      const output = enrichedResponse.choices[0]?.message?.content || '';
-      const success = this.successWhen(output);
-      await this.report(success, success ? undefined : 'Output did not meet success criteria', undefined, undefined);
+    // Auto-evaluate outcome — three priority levels
+    if (!this.outcomeReported) {
+      const output = enrichedResponse.choices[0]?.message?.content || "";
+
+      if (this.scoreWhen) {
+        // Priority 1: continuous scorer
+        const score = Math.min(1.0, Math.max(0.0, this.scoreWhen(output)));
+        await this.report(score >= 0.5, score < 0.5 ? "Score below threshold" : undefined, score);
+      } else if (this.successWhen) {
+        // Priority 2: binary scorer
+        const success = this.successWhen(output);
+        await this.report(success, success ? undefined : "Output did not meet success criteria");
+      } else {
+        // Priority 3: default heuristic scoring (zero-config)
+        const score = this._defaultScore(enrichedResponse);
+        await this.report(score >= 0.5, score < 0.5 ? "Heuristic score below threshold" : undefined, score);
+      }
     }
 
     return enrichedResponse;
+  }
+
+  /**
+   * Route any HuggingFace task with the same outcome-learning loop as completion().
+   * Works for transcription, image generation, embeddings, classification, and all
+   * 17 HuggingFace task types.
+   *
+   * @param task - HuggingFace task type (e.g. "automatic_speech_recognition")
+   * @param inputData - Task-appropriate input (audio bytes, text string, image, etc.)
+   * @param options - Additional options passed to the HuggingFace InferenceClient
+   * @returns Task-appropriate response from HuggingFace
+   *
+   * @example
+   * ```typescript
+   * const router = new Router({
+   *   goal: "transcribe_calls",
+   *   paths: ["openai/whisper-large-v3", "facebook/wav2vec2-large-960h"],
+   *   successWhen: (output) => output.length > 50,
+   * });
+   * const text = await router.execute("automatic_speech_recognition", audioBytes);
+   * ```
+   */
+  async execute(task: HFTask, inputData: unknown, options: Record<string, unknown> = {}): Promise<unknown> {
+    // Reset state
+    this.outcomeReported = false;
+    this.lastTraceId = getTraceId() || newTraceId();
+
+    // Get routing decision
+    let selectedModel: string;
+    try {
+      const decision = await decide(this.goal);
+      this.lastDecision = decision;
+      selectedModel = decision.model_id;
+      if (decision.trace_id) this.lastTraceId = decision.trace_id;
+    } catch {
+      selectedModel = this.paths[0]!.model;
+    }
+    this.lastModel = selectedModel;
+
+    // Validate task
+    if (!(HF_SUPPORTED_TASKS as readonly string[]).includes(task)) {
+      throw new Error(
+        `Unsupported task "${task}". Supported tasks: ${HF_SUPPORTED_TASKS.join(", ")}`
+      );
+    }
+
+    // Dispatch to HuggingFace InferenceClient
+    let response: unknown;
+    try {
+      // @ts-expect-error - huggingface_hub is an optional peer dependency
+      const { InferenceClient } = await import("@huggingface/inference");
+      const token = this.getEnv("HF_API_TOKEN") || this.getEnv("HUGGING_FACE_HUB_TOKEN");
+      const client = new InferenceClient(token);
+      const method = (client as Record<string, unknown>)[task];
+      if (typeof method !== "function") {
+        throw new Error(`InferenceClient has no method: ${task}`);
+      }
+      response = await (method as Function).call(client, inputData, { model: selectedModel, ...options });
+    } catch (err) {
+      await reportOutcome(this.lastTraceId!, this.goal, false, {
+        failureReason: `provider_error: ${(err as Error).message}`,
+        modelId: selectedModel,
+      });
+      this.outcomeReported = true;
+      throw err;
+    }
+
+    // Auto-report if scorer provided
+    if (!this.outcomeReported) {
+      if (this.scoreWhen) {
+        const output = typeof response === "string" ? response : JSON.stringify(response);
+        const score = Math.min(1.0, Math.max(0.0, this.scoreWhen(output)));
+        await this.report(score >= 0.5, undefined, score);
+      } else if (this.successWhen) {
+        const output = typeof response === "string" ? response : JSON.stringify(response);
+        const success = this.successWhen(output);
+        await this.report(success);
+      } else {
+        // Default: non-null response = success
+        await this.report(response != null, undefined, response != null ? 0.7 : 0.0);
+      }
+    }
+
+    return response;
   }
 
   /**
@@ -696,6 +833,43 @@ export class Router {
     return this.lastModel;
   }
 
+  /**
+   * Compute a heuristic quality score from an LLM response.
+   * Used when no successWhen or scoreWhen is provided.
+   * Gives day-one quality metrics without writing evaluation code.
+   */
+  private _defaultScore(response: KalibrChatCompletion): number {
+    const content = response.choices[0]?.message?.content || "";
+
+    // Empty response is always 0
+    if (!content.trim()) return 0.0;
+
+    // Signal 1: length score (sigmoid around 200 chars)
+    const charCount = content.length;
+    const lengthScore = 1.0 / (1.0 + Math.exp(-0.005 * (charCount - 200)));
+
+    // Signal 2: structure score
+    let structureScore = 0.5;
+    const stripped = content.trim();
+    try {
+      JSON.parse(stripped);
+      structureScore = 1.0; // valid JSON
+    } catch {
+      if (stripped.startsWith("{") || stripped.startsWith("[")) {
+        structureScore = 0.3; // malformed JSON
+      } else if (content.includes("## ") || content.includes("- ") || content.includes("```")) {
+        structureScore = 0.8; // markdown
+      }
+    }
+
+    // Signal 3: finish reason
+    const finishReason = response.choices[0]?.finish_reason || "";
+    const finishScore = finishReason === "stop" ? 1.0 : finishReason === "length" ? 0.5 : 0.3;
+
+    const score = 0.1 * 1.0 + 0.3 * lengthScore + 0.3 * structureScore + 0.3 * finishScore;
+    return Math.round(Math.min(1.0, Math.max(0.0, score)) * 1000) / 1000;
+  }
+
   // ============================================================================
   // Provider Dispatch Methods
   // ============================================================================
@@ -718,6 +892,10 @@ export class Router {
         return this.callGoogle(model, messages, options);
       case 'cohere':
         return this.callCohere(model, messages, options);
+      case 'deepseek':
+        return this.callDeepSeek(model, messages, options);
+      case 'huggingface':
+        return this.callHuggingFaceChat(model, messages, options);
       default:
         throw new Error(`Unsupported provider: ${provider}`);
     }
@@ -960,6 +1138,83 @@ export class Router {
       };
       finish_reason?: string;
     }, model);
+  }
+
+  /**
+   * Make a completion request to DeepSeek (OpenAI-compatible API).
+   */
+  private async callDeepSeek(
+    model: string,
+    messages: Message[],
+    options: CompletionOptions
+  ): Promise<ChatCompletion> {
+    // @ts-expect-error - openai is an optional peer dependency
+    const OpenAI = (await import('openai')).default;
+    const apiKey = this.getEnv("DEEPSEEK_API_KEY");
+    if (!apiKey) {
+      throw new Error("DEEPSEEK_API_KEY environment variable is required for DeepSeek models");
+    }
+    const client = new OpenAI({ apiKey, baseURL: "https://api.deepseek.com" });
+    const response = await client.chat.completions.create({
+      model,
+      messages: messages.map((m: Message) => ({ role: m.role, content: m.content })),
+      max_tokens: options.maxTokens,
+      temperature: options.temperature,
+      top_p: options.topP,
+      stop: options.stop,
+    });
+    return {
+      id: response.id,
+      object: "chat.completion",
+      created: response.created,
+      model: response.model,
+      choices: response.choices.map((choice: { message: { content: string | null }; finish_reason: string | null }, index: number) => ({
+        index,
+        message: { role: "assistant" as const, content: choice.message.content || "" },
+        finish_reason: choice.finish_reason || "stop",
+      })),
+      usage: {
+        prompt_tokens: response.usage?.prompt_tokens || 0,
+        completion_tokens: response.usage?.completion_tokens || 0,
+        total_tokens: response.usage?.total_tokens || 0,
+      },
+    };
+  }
+
+  /**
+   * Make a chat completion request via HuggingFace InferenceClient.
+   */
+  private async callHuggingFaceChat(
+    model: string,
+    messages: Message[],
+    options: CompletionOptions
+  ): Promise<ChatCompletion> {
+    // @ts-expect-error - @huggingface/inference is an optional peer dependency
+    const { InferenceClient } = await import("@huggingface/inference");
+    const token = this.getEnv("HF_API_TOKEN") || this.getEnv("HUGGING_FACE_HUB_TOKEN");
+    const client = new InferenceClient(token);
+    const response = await client.chatCompletion({
+      model,
+      messages: messages.map((m: Message) => ({ role: m.role, content: m.content })),
+      max_tokens: options.maxTokens,
+      temperature: options.temperature,
+    });
+    return {
+      id: `hf-${model}-${Date.now()}`,
+      object: "chat.completion",
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: (response.choices || []).map((choice: { message: { content: string | null }; finish_reason?: string }, index: number) => ({
+        index,
+        message: { role: "assistant" as const, content: choice.message?.content || "" },
+        finish_reason: choice.finish_reason || "stop",
+      })),
+      usage: {
+        prompt_tokens: response.usage?.prompt_tokens || 0,
+        completion_tokens: response.usage?.completion_tokens || 0,
+        total_tokens: response.usage?.total_tokens || 0,
+      },
+    };
   }
 
   /**
