@@ -1,14 +1,17 @@
 # @kalibr/sdk
 
-Zero-dependency TypeScript SDK for Kalibr LLM observability. Track costs, latency, and token usage across OpenAI, Anthropic, Google, and Cohere models.
+TypeScript SDK for Kalibr — outcome-aware routing for AI agents. Routes LLM calls across OpenAI, Anthropic, Google, DeepSeek, HuggingFace, and Cohere based on what actually works in production.
 
-[![npm version](https://img.shields.io/badge/npm-v1.5.0-blue)](https://www.npmjs.com/package/@kalibr/sdk)
+[![npm version](https://img.shields.io/npm/v/@kalibr/sdk)](https://www.npmjs.com/package/@kalibr/sdk)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ## Features
 
 - **Zero dependencies** - Uses native `fetch`, works in Node.js 18+, Edge runtimes, and browsers
-- **Intelligent Router** - Automatic model routing with outcome learning across OpenAI, Anthropic, Google, Cohere
+- **Intelligent Router** - Outcome-aware routing across OpenAI, Anthropic, Google, DeepSeek, HuggingFace, and Cohere. Thompson Sampling learns which path wins for each goal.
+- **HuggingFace Multimodal** - `router.execute()` routes all 17 HF task types (STT, image gen, embeddings, classification, translation, and more)
+- **DeepSeek support** - `deepseek-chat`, `deepseek-reasoner`, `deepseek-coder` work out of the box
+- **Continuous scoring** - `scoreWhen` for quality signals (0.0-1.0), auto-heuristic scoring when no callback provided
 - **Execution Intelligence** - Query optimal models based on historical performance with `getPolicy()` and `decide()`
 - **Outcome Tracking** - Report success/failure to continuously improve routing decisions
 - **Auto-Instrumentation** - Wrap LLM clients for zero-config tracing
@@ -208,6 +211,58 @@ const router = new Router({
   ],
   explorationRate: 0.1,  // 10% exploration of new paths
   autoRegister: true,    // Register paths with intelligence API (default)
+});
+```
+
+### DeepSeek
+
+```typescript
+const router = new Router({
+  goal: "classify_icp",
+  paths: ["deepseek-chat", "gpt-4o-mini"],  // DeepSeek is ~10x cheaper than GPT-4o
+  successWhen: (output) => output.length > 0,
+});
+// Requires: DEEPSEEK_API_KEY env var
+```
+
+Supported: `deepseek-chat` (V3), `deepseek-reasoner` (R1), `deepseek-coder`.
+
+### HuggingFace multimodal routing
+
+Use `router.execute()` for any non-chat task:
+
+```typescript
+import { Router, HF_SUPPORTED_TASKS } from "@kalibr/sdk";
+
+// Speech-to-text
+const sttRouter = new Router({
+  goal: "transcribe_calls",
+  paths: ["openai/whisper-large-v3", "facebook/wav2vec2-large-960h"],
+});
+const transcript = await sttRouter.execute("automatic_speech_recognition", audioBuffer);
+
+// Image generation
+const imgRouter = new Router({ goal: "product_image", paths: ["black-forest-labs/FLUX.1-schnell"] });
+const image = await imgRouter.execute("text_to_image", "a product photo of a laptop");
+
+// Embeddings
+const embedRouter = new Router({ goal: "semantic_search", paths: ["sentence-transformers/all-MiniLM-L6-v2"] });
+const vector = await embedRouter.execute("feature_extraction", "search query text");
+```
+
+All 17 task types: `chat_completion`, `text_generation`, `summarization`, `translation`, `fill_mask`, `table_question_answering`, `automatic_speech_recognition`, `text_to_speech`, `audio_classification`, `text_to_image`, `image_to_text`, `image_classification`, `image_segmentation`, `object_detection`, `feature_extraction`, `text_classification`, `token_classification`.
+
+Optional: set `HF_API_TOKEN` or `HUGGING_FACE_HUB_TOKEN` for private models or to bypass free-tier rate limits.
+
+### Continuous scoring with scoreWhen
+
+```typescript
+const router = new Router({
+  goal: "summarize",
+  paths: ["gpt-4o-mini", "deepseek-chat"],
+  // scoreWhen takes priority over successWhen — returns 0.0-1.0
+  scoreWhen: (output) => Math.min(1.0, output.length / 500),
+  // If neither is provided, Kalibr auto-scores using heuristics (length, structure, finish reason)
 });
 ```
 
