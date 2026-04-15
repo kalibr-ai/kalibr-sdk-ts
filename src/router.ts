@@ -1328,10 +1328,14 @@ export class Router {
         },
         finish_reason: "stop",
       }],
+      // Tavily is credit-based, not token-based.
+      // We send prompt_tokens=1 so calculateCost() fires against the tavily pricing table,
+      // which stores per-call USD cost as a per-1M-token rate.
+      // basic=1 credit=$0.008, advanced=2 credits=$0.016 (source: docs.tavily.com/documentation/api-credits)
       usage: {
-        prompt_tokens: 0,
+        prompt_tokens: 1,
         completion_tokens: 0,
-        total_tokens: 0,
+        total_tokens: 1,
       },
     };
   }

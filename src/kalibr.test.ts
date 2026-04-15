@@ -601,6 +601,20 @@ describe('calculateCost - HuggingFace models', () => {
     assert.ok(typeof cost === 'number');
     assert.ok(cost > 0);
   });
+
+  it('should calculate Tavily basic search cost ($0.008 per call)', () => {
+    // Tavily basic = 1 credit = $0.008. We model as 1 input "token" at $8000/M rate.
+    // (1 / 1_000_000) * 8000 = $0.008 per call
+    const cost = calculateCost('tavily', 'tavily/basic', 1, 0);
+    assert.strictEqual(cost, 0.008);
+  });
+
+  it('should calculate Tavily advanced search cost ($0.016 per call)', () => {
+    // Tavily advanced = 2 credits = $0.016. Modeled as 1 input "token" at $16000/M rate.
+    // (1 / 1_000_000) * 16000 = $0.016 per call
+    const cost = calculateCost('tavily', 'tavily/advanced', 1, 0);
+    assert.strictEqual(cost, 0.016);
+  });
 });
 
 // ============================================================================
