@@ -234,6 +234,12 @@ const PRICING: Record<string, Record<string, ModelPricing>> = {
     'command-r': { input: 0.5, output: 1.5 },
     'command-r-plus': { input: 3.0, output: 15.0 },
   },
+  huggingface: {
+    'meta-llama/llama-3.3-70b-instruct': { input: 0.30, output: 0.30 },
+    'mistralai/mixtral-8x22b-instruct-v0.1': { input: 0.65, output: 0.65 },
+    'qwen/qwen2.5-72b-instruct': { input: 0.35, output: 0.35 },
+    'deepseek-ai/deepseek-r1': { input: 0.55, output: 2.19 },
+  },
 };
 
 /** Default pricing for unknown models */
@@ -303,6 +309,11 @@ function normalizeModelName(provider: Provider, modelName: string): string {
     if (modelLower.includes('command-r-plus')) return 'command-r-plus';
     if (modelLower.includes('command-r')) return 'command-r';
     if (modelLower.includes('command')) return 'command';
+  }
+
+  // HuggingFace models: use lowercase full path for pricing lookup
+  if (modelLower.includes('/')) {
+    return modelLower;
   }
 
   return modelLower;

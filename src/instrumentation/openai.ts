@@ -26,6 +26,9 @@ interface OpenAIClient {
       create: (params: any, options?: any) => Promise<any>;
     };
   };
+  responses?: {
+    create: (params: any, options?: any) => Promise<any>;
+  };
 }
 
 /**
@@ -72,13 +75,35 @@ export function createTracedOpenAI(apiKey?: string): OpenAIClient {
     );
   };
 
+  // Wrap responses.create() if the Responses API is available
+  if (client.responses) {
+    const originalResponsesCreate = client.responses.create.bind(client.responses);
+    client.responses.create = async (params: any, options?: any) => {
+      return traceWrapper(
+        'response',
+        'openai',
+        params.model,
+        () => originalResponsesCreate(params, options),
+        (result: any) => ({
+          inputTokens: result.usage?.input_tokens ?? result.usage?.prompt_tokens,
+          outputTokens: result.usage?.output_tokens ?? result.usage?.completion_tokens,
+          metadata: {
+            response_id: result.id,
+            status: result.status,
+          },
+        })
+      );
+    };
+  }
+
   return client;
 }
 
 /**
  * Wrap an existing OpenAI client with automatic tracing.
  *
- * Modifies the client in-place to add tracing to chat.completions.create().
+ * Modifies the client in-place to add tracing to chat.completions.create()
+ * and responses.create() (if available).
  *
  * @param client - An existing OpenAI client instance
  * @returns The same client with tracing enabled
@@ -93,6 +118,8 @@ export function createTracedOpenAI(apiKey?: string): OpenAIClient {
  *
  * // All subsequent calls are traced
  * const response = await openai.chat.completions.create({...});
+ * // Responses API calls are also traced
+ * const resp = await openai.responses.create({...});
  * ```
  */
 export function wrapOpenAI<T extends OpenAIClient>(client: T): T {
@@ -113,6 +140,27 @@ export function wrapOpenAI<T extends OpenAIClient>(client: T): T {
       })
     );
   };
+
+  // Wrap responses.create() if the Responses API is available
+  if (client.responses) {
+    const originalResponsesCreate = client.responses.create.bind(client.responses);
+    client.responses.create = async (params: any, options?: any) => {
+      return traceWrapper(
+        'response',
+        'openai',
+        params.model,
+        () => originalResponsesCreate(params, options),
+        (result: any) => ({
+          inputTokens: result.usage?.input_tokens ?? result.usage?.prompt_tokens,
+          outputTokens: result.usage?.output_tokens ?? result.usage?.completion_tokens,
+          metadata: {
+            response_id: result.id,
+            status: result.status,
+          },
+        })
+      );
+    };
+  }
 
   return client;
 }

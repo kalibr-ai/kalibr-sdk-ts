@@ -135,7 +135,7 @@ export {
   type TraceConfig,
 } from './trace';
 
-// Auto-Instrumentation (Phase 4)
+// Auto-Instrumentation (Phase 4) — includes OpenAI Responses API tracing
 export {
   createTracedOpenAI,
   wrapOpenAI,
