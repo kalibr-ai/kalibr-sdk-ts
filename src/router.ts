@@ -155,7 +155,7 @@ export interface KalibrChatCompletion extends ChatCompletion {
 /**
  * Supported LLM providers.
  */
-type LLMProvider = 'openai' | 'anthropic' | 'google' | 'cohere' | 'deepseek' | 'huggingface';
+type LLMProvider = 'openai' | 'anthropic' | 'google' | 'cohere' | 'deepseek' | 'huggingface' | 'nebius' | 'tavily';
 
 /**
  * Detect the provider from a model identifier.
@@ -198,6 +198,16 @@ function detectProvider(model: string): LLMProvider {
     return "deepseek";
   }
 
+  // Nebius AI Studio models (nebius/ prefix)
+  if (modelLower.startsWith("nebius/")) {
+    return "nebius";
+  }
+
+  // Tavily Search (tavily/ prefix)
+  if (modelLower.startsWith("tavily/")) {
+    return "tavily";
+  }
+
   // HuggingFace models (org/model format, e.g. "meta-llama/Llama-3.3-70B-Instruct")
   if (modelLower.includes("/") && !modelLower.startsWith("models/")) {
     return "huggingface";
@@ -207,7 +217,7 @@ function detectProvider(model: string): LLMProvider {
     `Cannot determine provider for model: ${model}. ` +
       'Supported prefixes: gpt-, o1-, o3-, o4-, chatgpt- (OpenAI), claude- (Anthropic), ' +
       'gemini-, models/gemini (Google), command (Cohere), deepseek- (DeepSeek), ' +
-      'org/model (HuggingFace)'
+      'nebius/ (Nebius), tavily/ (Tavily), org/model (HuggingFace)'
   );
 }
 
@@ -896,6 +906,10 @@ export class Router {
         return this.callDeepSeek(model, messages, options);
       case 'huggingface':
         return this.callHuggingFaceChat(model, messages, options);
+      case 'nebius':
+        return this.callNebius(model, messages, options);
+      case 'tavily':
+        return this.callTavily(model, messages, options);
       default:
         throw new Error(`Unsupported provider: ${provider}`);
     }
@@ -1215,6 +1229,312 @@ export class Router {
         total_tokens: response.usage?.total_tokens || 0,
       },
     };
+  }
+
+  /**
+   * Make a completion request to Nebius AI Studio (OpenAI-compatible API).
+   */
+  private async callNebius(
+    model: string,
+    messages: Message[],
+    options: CompletionOptions
+  ): Promise<ChatCompletion> {
+    // @ts-expect-error - openai is an optional peer dependency
+    const OpenAI = (await import('openai')).default;
+    const apiKey = this.getEnv("NEBIUS_API_KEY");
+    if (!apiKey) {
+      throw new Error("NEBIUS_API_KEY environment variable is required for Nebius models");
+    }
+    // Strip the "nebius/" prefix to get the actual model ID
+    const nebiusModel = model.replace(/^nebius\//, '');
+    const client = new OpenAI({ apiKey, baseURL: "https://api.studio.nebius.ai/v1" });
+    const response = await client.chat.completions.create({
+      model: nebiusModel,
+      messages: messages.map((m: Message) => ({ role: m.role, content: m.content })),
+      max_tokens: options.maxTokens,
+      temperature: options.temperature,
+      top_p: options.topP,
+      stop: options.stop,
+    });
+    return {
+      id: response.id,
+      object: "chat.completion",
+      created: response.created,
+      model: response.model,
+      choices: response.choices.map((choice: { message: { content: string | null }; finish_reason: string | null }, index: number) => ({
+        index,
+        message: { role: "assistant" as const, content: choice.message.content || "" },
+        finish_reason: choice.finish_reason || "stop",
+      })),
+      usage: {
+        prompt_tokens: response.usage?.prompt_tokens || 0,
+        completion_tokens: response.usage?.completion_tokens || 0,
+        total_tokens: response.usage?.total_tokens || 0,
+      },
+    };
+  }
+
+  /**
+   * Make a search request via Tavily and wrap results in ChatCompletion format.
+   */
+  private async callTavily(
+    model: string,
+    messages: Message[],
+    _options: CompletionOptions
+  ): Promise<ChatCompletion> {
+    const apiKey = this.getEnv("TAVILY_API_KEY");
+    if (!apiKey) {
+      throw new Error("TAVILY_API_KEY environment variable is required for Tavily search");
+    }
+    // Determine search depth from model path: tavily/basic or tavily/advanced
+    const depth = model.toLowerCase().includes("advanced") ? "advanced" : "basic";
+    // Use the last user message as the search query
+    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+    const query = lastUserMsg?.content || '';
+    if (!query) {
+      throw new Error("Tavily search requires at least one user message as the query");
+    }
+
+    const fetchFn = globalThis.fetch;
+    const response = await fetchFn("https://api.tavily.com/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query,
+        search_depth: depth,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      throw new Error(`Tavily API error ${response.status}: ${errorText}`);
+    }
+
+    const results = await response.json();
+
+    return {
+      id: `tavily-${generateId()}`,
+      object: "chat.completion",
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: [{
+        index: 0,
+        message: {
+          role: "assistant",
+          content: JSON.stringify(results),
+        },
+        finish_reason: "stop",
+      }],
+      // Tavily is credit-based, not token-based.
+      // We send prompt_tokens=1 so calculateCost() fires against the tavily pricing table,
+      // which stores per-call USD cost as a per-1M-token rate.
+      // basic=1 credit=$0.008, advanced=2 credits=$0.016 (source: docs.tavily.com/documentation/api-credits)
+      usage: {
+        prompt_tokens: 1,
+        completion_tokens: 0,
+        total_tokens: 1,
+      },
+    };
+  }
+
+  /**
+   * Synthesize text to speech.
+   *
+   * Detects the TTS vendor from the model prefix:
+   * - `elevenlabs/` → ElevenLabs TTS (requires ELEVENLABS_API_KEY)
+   * - `openai/tts-*` → OpenAI TTS
+   * - `deepgram/` → Deepgram TTS (requires DEEPGRAM_API_KEY)
+   *
+   * @param text - The text to synthesize
+   * @param voice - Optional voice identifier (provider-specific)
+   * @param options - Additional provider-specific options
+   * @returns Base64-encoded audio string
+   */
+  async synthesize(
+    text: string,
+    voice?: string,
+    options: Record<string, unknown> = {}
+  ): Promise<string> {
+    this.outcomeReported = false;
+    this.lastTraceId = getTraceId() || newTraceId();
+
+    let selectedModel: string;
+    try {
+      const decision = await decide(this.goal);
+      this.lastDecision = decision;
+      selectedModel = decision.model_id;
+      if (decision.trace_id) this.lastTraceId = decision.trace_id;
+    } catch {
+      selectedModel = this.paths[0]!.model;
+    }
+    this.lastModel = selectedModel;
+
+    const modelLower = selectedModel.toLowerCase();
+    let result: string;
+
+    try {
+      if (modelLower.startsWith('elevenlabs/')) {
+        const apiKey = this.getEnv('ELEVENLABS_API_KEY');
+        if (!apiKey) throw new Error('ELEVENLABS_API_KEY environment variable is required for ElevenLabs TTS');
+        const voiceId = voice || 'Rachel';
+        const modelId = selectedModel.replace(/^elevenlabs\//i, '') || 'eleven_monolingual_v1';
+        const fetchFn = globalThis.fetch;
+        const resp = await fetchFn(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'xi-api-key': apiKey,
+          },
+          body: JSON.stringify({ text, model_id: modelId, ...options }),
+        });
+        if (!resp.ok) throw new Error(`ElevenLabs API error ${resp.status}`);
+        const buf = await resp.arrayBuffer();
+        result = Buffer.from(buf).toString('base64');
+
+      } else if (modelLower.startsWith('openai/tts')) {
+        // @ts-expect-error - openai is an optional peer dependency
+        const OpenAI = (await import('openai')).default;
+        const client = new OpenAI();
+        const ttsModel = selectedModel.replace(/^openai\//i, '');
+        const resp = await client.audio.speech.create({
+          model: ttsModel,
+          voice: voice || 'alloy',
+          input: text,
+          ...options,
+        });
+        const buf = await resp.arrayBuffer();
+        result = Buffer.from(buf).toString('base64');
+
+      } else if (modelLower.startsWith('deepgram/')) {
+        const apiKey = this.getEnv('DEEPGRAM_API_KEY');
+        if (!apiKey) throw new Error('DEEPGRAM_API_KEY environment variable is required for Deepgram TTS');
+        const dgModel = selectedModel.replace(/^deepgram\//i, '') || 'aura-asteria-en';
+        const fetchFn = globalThis.fetch;
+        const resp = await fetchFn(`https://api.deepgram.com/v1/speak?model=${dgModel}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Token ${apiKey}`,
+          },
+          body: JSON.stringify({ text }),
+        });
+        if (!resp.ok) throw new Error(`Deepgram TTS API error ${resp.status}`);
+        const buf = await resp.arrayBuffer();
+        result = Buffer.from(buf).toString('base64');
+
+      } else {
+        throw new Error(
+          `Unsupported TTS model: ${selectedModel}. ` +
+          'Supported prefixes: elevenlabs/, openai/tts-*, deepgram/'
+        );
+      }
+    } catch (err) {
+      await reportOutcome(this.lastTraceId!, this.goal, false, {
+        failureReason: `provider_error: ${(err as Error).message}`,
+        modelId: selectedModel,
+      });
+      this.outcomeReported = true;
+      throw err;
+    }
+
+    if (!this.outcomeReported) {
+      await this.report(true, undefined, 0.8);
+    }
+
+    return result;
+  }
+
+  /**
+   * Transcribe audio to text.
+   *
+   * Detects the STT vendor from the model prefix:
+   * - `openai/whisper-*` → OpenAI Whisper
+   * - `deepgram/` → Deepgram STT (requires DEEPGRAM_API_KEY)
+   *
+   * @param audio - Audio data as Buffer or Uint8Array
+   * @param options - Additional provider-specific options
+   * @returns Transcript text
+   */
+  async transcribe(
+    audio: Buffer | Uint8Array,
+    options: Record<string, unknown> = {}
+  ): Promise<string> {
+    this.outcomeReported = false;
+    this.lastTraceId = getTraceId() || newTraceId();
+
+    let selectedModel: string;
+    try {
+      const decision = await decide(this.goal);
+      this.lastDecision = decision;
+      selectedModel = decision.model_id;
+      if (decision.trace_id) this.lastTraceId = decision.trace_id;
+    } catch {
+      selectedModel = this.paths[0]!.model;
+    }
+    this.lastModel = selectedModel;
+
+    const modelLower = selectedModel.toLowerCase();
+    let transcript: string;
+
+    try {
+      if (modelLower.startsWith('openai/whisper') || modelLower === 'openai/whisper-1') {
+        // @ts-expect-error - openai is an optional peer dependency
+        const OpenAI = (await import('openai')).default;
+        const client = new OpenAI();
+        const whisperModel = selectedModel.replace(/^openai\//i, '');
+        const file = new File([new Uint8Array(audio)], 'audio.wav', { type: 'audio/wav' });
+        const resp = await client.audio.transcriptions.create({
+          model: whisperModel,
+          file,
+          ...options,
+        });
+        transcript = typeof resp === 'string' ? resp : resp.text;
+
+      } else if (modelLower.startsWith('deepgram/')) {
+        const apiKey = this.getEnv('DEEPGRAM_API_KEY');
+        if (!apiKey) throw new Error('DEEPGRAM_API_KEY environment variable is required for Deepgram STT');
+        const dgModel = selectedModel.replace(/^deepgram\//i, '') || 'nova-2';
+        const fetchFn = globalThis.fetch;
+        const resp = await fetchFn(`https://api.deepgram.com/v1/listen?model=${dgModel}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'audio/wav',
+            'Authorization': `Token ${apiKey}`,
+          },
+          body: new Uint8Array(audio),
+        });
+        if (!resp.ok) throw new Error(`Deepgram STT API error ${resp.status}`);
+        const data = await resp.json();
+        transcript = data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
+
+      } else {
+        throw new Error(
+          `Unsupported STT model: ${selectedModel}. ` +
+          'Supported prefixes: openai/whisper-*, deepgram/'
+        );
+      }
+    } catch (err) {
+      await reportOutcome(this.lastTraceId!, this.goal, false, {
+        failureReason: `provider_error: ${(err as Error).message}`,
+        modelId: selectedModel,
+      });
+      this.outcomeReported = true;
+      throw err;
+    }
+
+    if (!this.outcomeReported) {
+      if (this.successWhen) {
+        const success = this.successWhen(transcript);
+        await this.report(success, success ? undefined : 'Transcript did not meet success criteria');
+      } else {
+        await this.report(transcript.length > 0, undefined, transcript.length > 0 ? 0.8 : 0.0);
+      }
+    }
+
+    return transcript;
   }
 
   /**

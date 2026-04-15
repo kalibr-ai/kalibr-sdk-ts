@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-04-15
+
+### Added
+- **OpenAI Responses API instrumentation** — `createTracedOpenAI()` and `wrapOpenAI()` now auto-trace `client.responses.create()` alongside `chat.completions.create()`
+- **Voice methods on Router**
+  - `Router.synthesize(text, voice?, options?)` — text-to-speech via ElevenLabs (`elevenlabs/`), OpenAI TTS (`openai/tts-*`), or Deepgram (`deepgram/`)
+  - `Router.transcribe(audio, options?)` — speech-to-text via OpenAI Whisper (`openai/whisper-*`) or Deepgram (`deepgram/`)
+  - Both methods use the same routing + outcome-learning loop as `completion()`
+- **Nebius AI Studio provider** — `nebius/` prefix routes to Nebius (OpenAI-compatible). Set `NEBIUS_API_KEY` env var. Supported models: `nebius/meta-llama/Llama-3.3-70B-Instruct`, `nebius/Qwen/Qwen2.5-72B-Instruct`
+- **Tavily Search provider** — `tavily/basic` and `tavily/advanced` paths for web search. Set `TAVILY_API_KEY` env var. Results returned as JSON in ChatCompletion shim
+- **HuggingFace model pricing** — added per-token pricing for Llama 3.3 70B, Mixtral 8x22B, Qwen2.5 72B, DeepSeek R1
+
 ## [1.6.0] - 2026-03-05
 
 ### Added

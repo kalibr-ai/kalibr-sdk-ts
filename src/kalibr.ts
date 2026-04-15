@@ -31,7 +31,7 @@ import { getTraceId, newTraceId, getParentSpanId, setParentSpanId } from './cont
 // ============================================================================
 
 /** LLM provider types */
-export type Provider = 'openai' | 'anthropic' | 'google' | 'cohere' | 'custom';
+export type Provider = 'openai' | 'anthropic' | 'google' | 'cohere' | 'deepseek' | 'nebius' | 'huggingface' | 'tavily' | 'custom';
 
 /** Execution status */
 export type Status = 'success' | 'error' | 'timeout';
@@ -234,6 +234,22 @@ const PRICING: Record<string, Record<string, ModelPricing>> = {
     'command-r': { input: 0.5, output: 1.5 },
     'command-r-plus': { input: 3.0, output: 15.0 },
   },
+  huggingface: {
+    'meta-llama/llama-3.3-70b-instruct': { input: 0.30, output: 0.30 },
+    'mistralai/mixtral-8x22b-instruct-v0.1': { input: 0.65, output: 0.65 },
+    'qwen/qwen2.5-72b-instruct': { input: 0.35, output: 0.35 },
+    'deepseek-ai/deepseek-r1': { input: 0.55, output: 2.19 },
+  },
+  nebius: {},
+  // Tavily Search pricing (credit-based, not token-based).
+  // Source: https://docs.tavily.com/documentation/api-credits (verified 2026-04-15)
+  //   basic search  = 1 credit = $0.008 (pay-as-you-go rate)
+  //   advanced search = 2 credits = $0.016
+  // We model each search as 1 input "token" worth the full per-call cost.
+  tavily: {
+    'tavily/basic': { input: 8000.0, output: 0.0 },    // $0.008 per call → $8.00 per 1M "tokens"
+    'tavily/advanced': { input: 16000.0, output: 0.0 }, // $0.016 per call → $16.00 per 1M "tokens"
+  },
 };
 
 /** Default pricing for unknown models */
@@ -303,6 +319,17 @@ function normalizeModelName(provider: Provider, modelName: string): string {
     if (modelLower.includes('command-r-plus')) return 'command-r-plus';
     if (modelLower.includes('command-r')) return 'command-r';
     if (modelLower.includes('command')) return 'command';
+  }
+
+  // Tavily: normalize to canonical key (tavily/basic or tavily/advanced)
+  if (provider === 'tavily') {
+    if (modelLower.includes('advanced')) return 'tavily/advanced';
+    return 'tavily/basic';
+  }
+
+  // HuggingFace models: use lowercase full path for pricing lookup
+  if (modelLower.includes('/')) {
+    return modelLower;
   }
 
   return modelLower;
