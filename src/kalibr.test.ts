@@ -748,8 +748,8 @@ describe('Router voice methods', () => {
 // ============================================================================
 
 describe('package version', () => {
-  it('should be 1.10.0', () => {
+  it('should be 1.11.0', () => {
     const pkg = require('../package.json');
-    assert.strictEqual(pkg.version, '1.10.0');
+    assert.strictEqual(pkg.version, '1.11.0');
   });
 });
