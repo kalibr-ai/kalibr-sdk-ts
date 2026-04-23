@@ -165,3 +165,12 @@ export {
 
 // PII Utilities
 export { redactText, hashText, redactAndHash } from './redaction';
+
+// User behavioral feedback loop (OpenClaw integration)
+export {
+  KalibrFeedback,
+  trackRun,
+  userRejected,
+  userAccepted,
+  getFeedback,
+} from './feedback';
