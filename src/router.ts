@@ -69,6 +69,12 @@ export interface RouterConfig {
   explorationRate?: number;
   /** Whether to auto-register paths on init (default: true) */
   autoRegister?: boolean;
+  /** Model to use as LLM-as-a-judge Gate 2 eval */
+  judgeModel?: string;
+  /** Retry if judge score below this (default 0.7) */
+  judgeThreshold?: number;
+  /** Rewrite prompt on Gate 2 failure before model swap */
+  repairPrompt?: boolean;
 }
 
 /**
@@ -155,7 +161,7 @@ export interface KalibrChatCompletion extends ChatCompletion {
 /**
  * Supported LLM providers.
  */
-type LLMProvider = 'openai' | 'anthropic' | 'google' | 'cohere' | 'deepseek' | 'huggingface' | 'nebius' | 'tavily';
+type LLMProvider = 'openai' | 'anthropic' | 'google' | 'cohere' | 'deepseek' | 'huggingface' | 'nebius' | 'tavily' | 'ollama';
 
 /**
  * Detect the provider from a model identifier.
@@ -208,6 +214,11 @@ function detectProvider(model: string): LLMProvider {
     return "tavily";
   }
 
+  // Ollama local models (ollama/ prefix)
+  if (modelLower.startsWith("ollama/")) {
+    return "ollama";
+  }
+
   // HuggingFace models (org/model format, e.g. "meta-llama/Llama-3.3-70B-Instruct")
   if (modelLower.includes("/") && !modelLower.startsWith("models/")) {
     return "huggingface";
@@ -217,7 +228,7 @@ function detectProvider(model: string): LLMProvider {
     `Cannot determine provider for model: ${model}. ` +
       'Supported prefixes: gpt-, o1-, o3-, o4-, chatgpt- (OpenAI), claude- (Anthropic), ' +
       'gemini-, models/gemini (Google), command (Cohere), deepseek- (DeepSeek), ' +
-      'nebius/ (Nebius), tavily/ (Tavily), org/model (HuggingFace)'
+      'nebius/ (Nebius), tavily/ (Tavily), ollama/ (Ollama), org/model (HuggingFace)'
   );
 }
 
@@ -450,6 +461,9 @@ export class Router {
   /** Exploration rate for routing decisions (stored for future use) */
   readonly explorationRate: number;
   private readonly autoRegister: boolean;
+  private judgeModel?: string;
+  private judgeThreshold: number;
+  private repairPrompt: boolean;
 
   // State tracking
   private lastTraceId: string | null = null;
@@ -470,6 +484,9 @@ export class Router {
     this.scoreWhen = config.scoreWhen;
     this.explorationRate = config.explorationRate ?? 0.1;
     this.autoRegister = config.autoRegister ?? true;
+    this.judgeModel = config.judgeModel;
+    this.judgeThreshold = config.judgeThreshold ?? 0.7;
+    this.repairPrompt = config.repairPrompt ?? false;
 
     // Validate at least one path
     if (this.paths.length === 0) {
@@ -642,6 +659,35 @@ export class Router {
     // All paths failed - throw the last error
     if (!response) {
       throw lastError || new Error('All paths failed');
+    }
+
+    // Gate 2: LLM-as-a-judge evaluation
+    if (this.judgeModel && response) {
+      const output = response.choices[0]?.message?.content || '';
+      try {
+        const judgeScore = await this.runJudge(output, messages);
+        if (judgeScore < this.judgeThreshold) {
+          // Attempt repair if enabled
+          let retryMessages = messages;
+          if (this.repairPrompt) {
+            retryMessages = await this.repairFailingPrompt(output, messages, judgeScore);
+          }
+          // Try next candidate path
+          for (let j = candidatePaths.indexOf(candidatePaths.find(p => p.model === this.lastModel)!) + 1; j < candidatePaths.length; j++) {
+            const fallback = candidatePaths[j]!;
+            try {
+              const fallbackProvider = detectProvider(fallback.model);
+              response = await this.dispatch(fallbackProvider, fallback.model, retryMessages, options);
+              this.lastModel = fallback.model;
+              break;
+            } catch {
+              continue;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Kalibr Router] Judge evaluation failed:', (err as Error).message);
+      }
     }
 
     // Attach trace ID to the response so callers can forward it
@@ -881,6 +927,36 @@ export class Router {
   }
 
   // ============================================================================
+  // Judge & Repair Methods
+  // ============================================================================
+
+  private async runJudge(output: string, originalMessages: Message[]): Promise<number> {
+    const originalPrompt = originalMessages.find(m => m.role === 'user')?.content || '';
+    const judgePrompt = `You are a quality evaluator. Score the following output 0.0 to 1.0.\n\nOriginal request: ${String(originalPrompt).slice(0, 500)}\n\nOutput:\n${output.slice(0, 1000)}\n\nScoring: 1.0=perfect, 0.7-0.9=good, 0.4-0.6=mediocre, 0.0-0.3=bad/wrong language/malformed.\nRespond with ONLY a number between 0.0 and 1.0.`;
+
+    const judgeProvider = detectProvider(this.judgeModel!);
+    const judgeResponse = await this.dispatch(judgeProvider, this.judgeModel!, [{ role: 'user', content: judgePrompt }], {});
+    const scoreText = judgeResponse.choices[0].message.content?.trim() || '0.5';
+    const matches = scoreText.match(/\d+\.?\d*/);
+    if (matches) {
+      return Math.min(1.0, Math.max(0.0, parseFloat(matches[0])));
+    }
+    return 0.5;
+  }
+
+  private async repairFailingPrompt(output: string, originalMessages: Message[], judgeScore: number): Promise<Message[]> {
+    const originalPrompt = originalMessages.find(m => m.role === 'user')?.content || '';
+    const repairRequest = `The following prompt produced a low-quality output (score: ${judgeScore.toFixed(2)}).\n\nOriginal prompt:\n${String(originalPrompt).slice(0, 800)}\n\nBad output:\n${output.slice(0, 600)}\n\nRewrite the prompt to be clearer and more specific so the model produces better output. Keep the intent identical. Return ONLY the rewritten prompt, no explanation.`;
+
+    const repairProvider = detectProvider(this.judgeModel!);
+    const repairResponse = await this.dispatch(repairProvider, this.judgeModel!, [{ role: 'user', content: repairRequest }], {});
+    const rewritten = repairResponse.choices[0].message.content?.trim();
+    if (!rewritten) return originalMessages;
+
+    return originalMessages.map(m => m.role === 'user' ? { ...m, content: rewritten } : m);
+  }
+
+  // ============================================================================
   // Provider Dispatch Methods
   // ============================================================================
 
@@ -910,6 +986,8 @@ export class Router {
         return this.callNebius(model, messages, options);
       case 'tavily':
         return this.callTavily(model, messages, options);
+      case 'ollama':
+        return this.callOllama(model, messages, options);
       default:
         throw new Error(`Unsupported provider: ${provider}`);
     }
@@ -1250,6 +1328,49 @@ export class Router {
     const client = new OpenAI({ apiKey, baseURL: "https://api.studio.nebius.ai/v1" });
     const response = await client.chat.completions.create({
       model: nebiusModel,
+      messages: messages.map((m: Message) => ({ role: m.role, content: m.content })),
+      max_tokens: options.maxTokens,
+      temperature: options.temperature,
+      top_p: options.topP,
+      stop: options.stop,
+    });
+    return {
+      id: response.id,
+      object: "chat.completion",
+      created: response.created,
+      model: response.model,
+      choices: response.choices.map((choice: { message: { content: string | null }; finish_reason: string | null }, index: number) => ({
+        index,
+        message: { role: "assistant" as const, content: choice.message.content || "" },
+        finish_reason: choice.finish_reason || "stop",
+      })),
+      usage: {
+        prompt_tokens: response.usage?.prompt_tokens || 0,
+        completion_tokens: response.usage?.completion_tokens || 0,
+        total_tokens: response.usage?.total_tokens || 0,
+      },
+    };
+  }
+
+  /**
+   * Call Ollama local model via OpenAI-compatible API.
+   * Default endpoint: http://localhost:11434/v1
+   * Override with OLLAMA_BASE_URL env var. No API key required.
+   */
+  private async callOllama(
+    model: string,
+    messages: Message[],
+    options: CompletionOptions
+  ): Promise<ChatCompletion> {
+    // @ts-expect-error - openai is an optional peer dependency
+    const OpenAI = (await import('openai')).default;
+    const baseURL = this.getEnv("OLLAMA_BASE_URL") || "http://localhost:11434/v1";
+    const apiKey = this.getEnv("OLLAMA_API_KEY") || "ollama"; // Ollama accepts any non-empty string
+    const ollamaModel = model.replace(/^ollama\//, '');
+
+    const client = new OpenAI({ apiKey, baseURL });
+    const response = await client.chat.completions.create({
+      model: ollamaModel,
       messages: messages.map((m: Message) => ({ role: m.role, content: m.content })),
       max_tokens: options.maxTokens,
       temperature: options.temperature,
