@@ -938,7 +938,7 @@ export class Router {
 
     const judgeProvider = detectProvider(this.judgeModel!);
     const judgeResponse = await this.dispatch(judgeProvider, this.judgeModel!, [{ role: 'user', content: judgePrompt }], {});
-    const scoreText = judgeResponse.choices[0].message.content?.trim() || '0.5';
+    const scoreText = (judgeResponse.choices[0]?.message?.content ?? '0.5').trim() || '0.5';
     const matches = scoreText.match(/\d+\.?\d*/);
     if (matches) {
       return Math.min(1.0, Math.max(0.0, parseFloat(matches[0])));
@@ -952,7 +952,7 @@ export class Router {
 
     const repairProvider = detectProvider(this.judgeModel!);
     const repairResponse = await this.dispatch(repairProvider, this.judgeModel!, [{ role: 'user', content: repairRequest }], {});
-    const rewritten = repairResponse.choices[0].message.content?.trim();
+    const rewritten = repairResponse.choices[0]?.message?.content?.trim();
     if (!rewritten) return originalMessages;
 
     return originalMessages.map(m => m.role === 'user' ? { ...m, content: rewritten } : m);
