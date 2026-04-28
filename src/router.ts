@@ -673,9 +673,11 @@ export class Router {
             retryMessages = await this.repairFailingPrompt(output, messages, judgeScore);
           }
           // Try next candidate path
-          for (let j = candidatePaths.indexOf(candidatePaths.find(p => p.model === this.lastModel)!) + 1; j < candidatePaths.length; j++) {
-            const fallback = candidatePaths[j]!;
+          const currentIdx = candidatePaths.findIndex(p => p.model === this.lastModel);
+          for (let j = (currentIdx >= 0 ? currentIdx : 0) + 1; j < candidatePaths.length; j++) {
+            const fallback = candidatePaths[j];
             try {
+              if (!fallback) continue;
               const fallbackProvider = detectProvider(fallback.model);
               response = await this.dispatch(fallbackProvider, fallback.model, retryMessages, options);
               this.lastModel = fallback.model;
