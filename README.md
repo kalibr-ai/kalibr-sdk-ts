@@ -842,7 +842,7 @@ The Python SDK (v1.12.1) is ahead of the TS SDK (v1.11.7) in the following areas
 | `decorators.py` (function-level instrumentation) | ✅ | ❌ missing |
 | OpenAI Responses API instrumentation | ✅ v1.6.0 | ❌ missing |
 
-See [GitHub issue #TODO](https://github.com/kalibr-ai/kalibr-sdk-ts/issues) for the full tracking issue.
+See [GitHub issue #44](https://github.com/kalibr-ai/kalibr-sdk-ts/issues/44) for the full tracking issue.
 
 ## Requirements
 
