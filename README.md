@@ -818,6 +818,32 @@ KALIBR_API_KEY=your-api-key
 KALIBR_TENANT_ID=your-tenant-id
 ```
 
+## Current Version / Status
+
+- **npm version:** `1.11.7` — [npmjs.com/@kalibr/sdk](https://www.npmjs.com/package/@kalibr/sdk)
+- **Python SDK counterpart:** `kalibr` v1.12.1 — see [kalibr-sdk-python](https://github.com/kalibr-ai/kalibr-sdk-python)
+- **Status:** Production. Zero dependencies, works in Node.js 18+, Edge runtimes, and browsers.
+
+### Python → TypeScript gap
+
+The Python SDK (v1.12.1) is ahead of the TS SDK (v1.11.7) in the following areas:
+
+| Feature | Python | TypeScript |
+|---------|--------|------------|
+| Tavily search provider (`tavily/basic`, `tavily/advanced`) | ✅ unreleased | ❌ missing |
+| Nebius AI Studio provider (`nebius/` prefix) | ✅ unreleased | ❌ missing |
+| Voice framework integrations (LiveKit, Pipecat) | ✅ v1.7.0 | ❌ missing |
+| LangChain integration (`as_langchain()`) | ✅ | ❌ missing |
+| CrewAI integration | ✅ | ❌ missing |
+| OpenAI Agents SDK integration | ✅ | ❌ missing |
+| `kalibr init` / `kalibr auth` CLI | ✅ | ❌ missing |
+| Agent self-onboarding / provisioning token flow | ✅ | ❌ missing |
+| `capsule_middleware` (multi-hop tracing) | ✅ | ⚠️ partial (`capsule.ts` exists) |
+| `decorators.py` (function-level instrumentation) | ✅ | ❌ missing |
+| OpenAI Responses API instrumentation | ✅ v1.6.0 | ❌ missing |
+
+See [GitHub issue #TODO](https://github.com/kalibr-ai/kalibr-sdk-ts/issues) for the full tracking issue.
+
 ## Requirements
 
 - Node.js 18+ (for native fetch)
