@@ -173,4 +173,9 @@ export {
   userRejected,
   userAccepted,
   getFeedback,
+  classifySatisfaction,
+  reportUserTurn,
+  reportSessionEnd,
+  reportPipeline,
+  reportAction,
 } from './feedback';
