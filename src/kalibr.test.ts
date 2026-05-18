@@ -750,6 +750,6 @@ describe('Router voice methods', () => {
 describe('package version', () => {
   it('should be 1.11.7', () => {
     const pkg = require('../package.json');
-    assert.strictEqual(pkg.version, '1.11.7');
+    assert.strictEqual(pkg.version, '1.12.1');
   });
 });
