@@ -179,3 +179,17 @@ export {
   reportPipeline,
   reportAction,
 } from './feedback';
+
+// Self-healing harness (v1.14.0 parity with Python SDK)
+export {
+  HealLoop,
+  KalibrPipeline,
+  type HealConfig,
+  type HealResult,
+  type Gate2Result,
+  type PipelineStep,
+  type StepResult,
+  type PipelineResult,
+  type PipelineRunOptions,
+  type DispatchFn,
+} from './healing';
