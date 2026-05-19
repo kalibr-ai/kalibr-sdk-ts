@@ -1,5 +1,5 @@
 /**
- * Kalibr self-healing harness — v1.14.0 parity with Python SDK.
+ * Kalibr self-healing harness — v1.14.1 parity with Python SDK.
  *
  * - Gate 1: structural eval (pure, no HTTP) — length/shape checks per goal
  * - Gate 2: judge LLM eval (optional, opt-in) — calls DeepSeek/OpenAI to score
@@ -36,6 +36,8 @@ export interface HealConfig {
   judgeModel?: string;
   /** Repair model id — null = use same model that produced bad output */
   repairModel?: string | null;
+  /** When true, generate a task-specific system prompt via DeepSeek/OpenAI before each run (default false) */
+  metaPromptEnabled?: boolean;
 }
 
 export interface HealResult {
@@ -100,7 +102,24 @@ const DEFAULT_HEAL_CONFIG: Required<Omit<HealConfig, 'repairModel'>> & { repairM
   gate2Enabled: false,
   judgeModel: 'deepseek-chat',
   repairModel: null,
+  metaPromptEnabled: false,
 };
+
+const META_PROMPT_TTL_MS = 300000;
+const metaPromptCache = new Map<string, { prompt: string; ts: number }>();
+
+function _hashKey(input: string): string {
+  let h1 = 0x811c9dc5;
+  let h2 = 0xdeadbeef;
+  for (let i = 0; i < input.length; i++) {
+    const c = input.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b);
+  }
+  const a = (h1 >>> 0).toString(16).padStart(8, '0');
+  const b = (h2 >>> 0).toString(16).padStart(8, '0');
+  return (a + b).slice(0, 16);
+}
 
 export class HealLoop {
   /**
@@ -233,6 +252,79 @@ export class HealLoop {
   }
 
   /**
+   * Generate a task-specific system prompt via DeepSeek/OpenAI.
+   * NEVER throws — returns null on any error or missing API key.
+   * Results are cached for 5 minutes keyed by goal + first 100 chars of user content.
+   */
+  async generateMetaPrompt(goal: string, messages: any[], modelId: string): Promise<string | null> {
+    const userPreview = messages.filter((m) => m && m.role === 'user').pop()?.content || '';
+    const cacheKey = _hashKey(`${goal}::${String(userPreview).slice(0, 100)}`);
+
+    const now = Date.now();
+    const cached = metaPromptCache.get(cacheKey);
+    if (cached && now - cached.ts < META_PROMPT_TTL_MS) {
+      return cached.prompt;
+    }
+
+    const env = typeof process !== 'undefined' ? process.env : {};
+    const deepseekKey = env['DEEPSEEK_API_KEY'];
+    const openaiKey = env['OPENAI_API_KEY'];
+
+    let endpoint: string;
+    let apiKey: string;
+    let model: string;
+    if (deepseekKey) {
+      endpoint = 'https://api.deepseek.com/chat/completions';
+      apiKey = deepseekKey;
+      model = 'deepseek-chat';
+    } else if (openaiKey) {
+      endpoint = 'https://api.openai.com/v1/chat/completions';
+      apiKey = openaiKey;
+      model = 'gpt-4o-mini';
+    } else {
+      return null;
+    }
+
+    void modelId;
+    const prompt =
+      `Generate a concise system prompt (under 150 words) for an AI completing this task.\n` +
+      `Goal type: ${goal}\n` +
+      `Task preview: ${String(userPreview).slice(0, 300)}\n` +
+      `Output ONLY the system prompt text.`;
+
+    try {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = controller ? setTimeout(() => controller.abort(), 8000) : null;
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.3,
+          max_tokens: 300,
+        }),
+        signal: controller ? controller.signal : undefined,
+      });
+      if (timer) clearTimeout(timer);
+
+      if (!res.ok) return null;
+      const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+      const content = data.choices?.[0]?.message?.content;
+      if (typeof content !== 'string' || !content.trim()) return null;
+      const out = content.trim();
+      metaPromptCache.set(cacheKey, { prompt: out, ts: now });
+      return out;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Run the heal loop: try each candidate model, repair on failure, swap on exhaust.
    */
   async run(
@@ -246,12 +338,23 @@ export class HealLoop {
     const cfg = { ...DEFAULT_HEAL_CONFIG, ...config };
     const candidates = paths.length > 0 ? paths : [cfg.repairModel ?? cfg.judgeModel];
 
+    let metaSysPrompt: string | null = null;
+    if (cfg.metaPromptEnabled && candidates.length > 0) {
+      metaSysPrompt = await this.generateMetaPrompt(goal, messages as any[], candidates[0] ?? '');
+    }
+    const buildInitial = (): unknown[] => {
+      if (metaSysPrompt) {
+        return [{ role: 'system', content: metaSysPrompt }, ...messages];
+      }
+      return messages.slice();
+    };
+
     const modelsTried: string[] = [];
     let healCount = 0;
     let healed = false;
     let lastError: string | null = null;
     let lastFailureCategory: string | null = null;
-    let currentMessages: unknown[] = messages.slice();
+    let currentMessages: unknown[] = buildInitial();
 
     if (pipelineId) {
       try {
@@ -281,7 +384,8 @@ export class HealLoop {
             if (!g2.skipped && g2.score !== null && g2.score < 0.5) {
               const repair = this.repairPrompt(goal, output, g2.issues);
               if (repair && attempt < cfg.maxRetries) {
-                currentMessages = this._appendRepairTurn(currentMessages, repair);
+                const combined = metaSysPrompt ? `${metaSysPrompt}\n\n${repair}` : repair;
+                currentMessages = this._appendRepairTurn(currentMessages, combined);
                 healCount++;
                 healed = true;
                 lastFailureCategory = 'gate2_low_score';
@@ -317,7 +421,8 @@ export class HealLoop {
           if (attempt < cfg.maxRetries) {
             const repair = this.repairPrompt(goal, output);
             if (repair) {
-              currentMessages = this._appendRepairTurn(currentMessages, repair);
+              const combined = metaSysPrompt ? `${metaSysPrompt}\n\n${repair}` : repair;
+              currentMessages = this._appendRepairTurn(currentMessages, combined);
               healCount++;
               healed = true;
               continue;
@@ -327,7 +432,7 @@ export class HealLoop {
       }
 
       // exhausted retries for this model — reset prompt and try next
-      currentMessages = messages.slice();
+      currentMessages = buildInitial();
     }
 
     return {
