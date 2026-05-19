@@ -5,6 +5,8 @@ TypeScript SDK for Kalibr — outcome-aware routing for AI agents. Routes LLM ca
 [![npm version](https://img.shields.io/npm/v/@kalibr/sdk)](https://www.npmjs.com/package/@kalibr/sdk)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
+> **v1.14.1** — TypeScript SDK is at full parity with Python SDK v1.14.1. Ships the self-healing harness (`HealLoop`, `HealConfig`) and multi-step pipelines (`KalibrPipeline`).
+
 ## Features
 
 - **Zero dependencies** - Uses native `fetch`, works in Node.js 18+, Edge runtimes, and browsers
@@ -284,6 +286,70 @@ const response = await router.completion(messages, {
   forceModel: 'gpt-4o',
 });
 ```
+
+## Self-healing
+
+`HealLoop` retries with prompt repair and swaps models when output fails a structural or judge-LLM check. Mirrors the Python SDK's heal loop (v1.14.1).
+
+```typescript
+import { HealLoop, HealConfig } from '@kalibr/sdk';
+
+const healLoop = new HealLoop();
+const config: HealConfig = { maxRetries: 2, gate2Enabled: false };
+
+const result = await healLoop.run(
+  'summarization',
+  [{ role: 'user', content: '...' }],
+  ['gpt-4o-mini', 'gpt-4o'],
+  dispatchFn,
+  config,
+  'my-pipeline',
+);
+
+console.log(result.healed, result.healCount, result.modelUsed);
+```
+
+`dispatchFn` is `(model, messages) => Promise<string>` — provide your own LLM call. The loop runs Gate 1 (pure structural eval), optionally Gate 2 (judge LLM), classifies failures, repairs the prompt, and swaps to the next path on exhaust.
+
+### HealConfig options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `maxRetries` | `2` | Repair attempts per model before swapping |
+| `gate2Enabled` | `false` | Invoke judge LLM for semantic scoring |
+| `judgeModel` | `'deepseek-chat'` | Model used for Gate 2 |
+| `repairModel` | `null` | If set, use this model for repair (else reuse current) |
+| `metaPromptEnabled` | `false` | Generate a task-specific system prompt before each run |
+
+## Multi-step pipeline
+
+`KalibrPipeline` chains steps, optionally feeding the previous step's output into the next, with the heal loop applied per step.
+
+```typescript
+import { Kalibr, KalibrPipeline } from '@kalibr/sdk';
+
+const kalibr = new Kalibr({
+  apiKey: process.env.KALIBR_API_KEY!,
+  tenantId: process.env.KALIBR_TENANT_ID!,
+});
+
+const pipeline = new KalibrPipeline(kalibr, 'my-pipeline-id');
+
+const result = await pipeline.run(
+  [
+    { goal: 'research', messages: [{ role: 'user', content: '...' }] },
+    { goal: 'outreach_generation', messages: [{ role: 'user', content: '...' }], chain: true },
+  ],
+  true, // healing
+  { maxRetries: 2 },
+  { paths: ['gpt-4o-mini', 'gpt-4o'], dispatchFn },
+);
+
+console.log(result.success, result.totalHeals);
+result.steps.forEach((s) => console.log(s.goal, s.modelUsed, s.healCount));
+```
+
+When `chain: true`, the previous step's output is appended as a user turn to the next step's messages. Pipeline telemetry is reported through the `Kalibr` instance.
 
 ## Intelligence API
 
@@ -820,29 +886,10 @@ KALIBR_TENANT_ID=your-tenant-id
 
 ## Current Version / Status
 
-- **npm version:** `1.11.7` — [npmjs.com/@kalibr/sdk](https://www.npmjs.com/package/@kalibr/sdk)
-- **Python SDK counterpart:** `kalibr` v1.12.1 — see [kalibr-sdk-python](https://github.com/kalibr-ai/kalibr-sdk-python)
+- **npm version:** `1.14.1` — [npmjs.com/@kalibr/sdk](https://www.npmjs.com/package/@kalibr/sdk)
+- **Python SDK counterpart:** `kalibr` v1.14.1 — see [kalibr-sdk-python](https://github.com/kalibr-ai/kalibr-sdk-python)
+- **Parity:** Full parity with Python SDK v1.14.1, including the heal loop (`HealLoop`, `HealConfig`), multi-step pipelines (`KalibrPipeline`), and meta-prompt generation.
 - **Status:** Production. Zero dependencies, works in Node.js 18+, Edge runtimes, and browsers.
-
-### Python → TypeScript gap
-
-The Python SDK (v1.12.1) is ahead of the TS SDK (v1.11.7) in the following areas:
-
-| Feature | Python | TypeScript |
-|---------|--------|------------|
-| Tavily search provider (`tavily/basic`, `tavily/advanced`) | ✅ unreleased | ❌ missing |
-| Nebius AI Studio provider (`nebius/` prefix) | ✅ unreleased | ❌ missing |
-| Voice framework integrations (LiveKit, Pipecat) | ✅ v1.7.0 | ❌ missing |
-| LangChain integration (`as_langchain()`) | ✅ | ❌ missing |
-| CrewAI integration | ✅ | ❌ missing |
-| OpenAI Agents SDK integration | ✅ | ❌ missing |
-| `kalibr init` / `kalibr auth` CLI | ✅ | ❌ missing |
-| Agent self-onboarding / provisioning token flow | ✅ | ❌ missing |
-| `capsule_middleware` (multi-hop tracing) | ✅ | ⚠️ partial (`capsule.ts` exists) |
-| `decorators.py` (function-level instrumentation) | ✅ | ❌ missing |
-| OpenAI Responses API instrumentation | ✅ v1.6.0 | ❌ missing |
-
-See [GitHub issue #44](https://github.com/kalibr-ai/kalibr-sdk-ts/issues/44) for the full tracking issue.
 
 ## Requirements
 
